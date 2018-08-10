@@ -1,0 +1,11 @@
+[package]
+name = "tange-collection"
+version = "0.1.0"
+authors = ["Andrew Stanton <astanton@etsy.com>"]
+
+[dependencies]
+tange = { path = "../tange" }
+
+[lib]
+name = "tange_collection"
+path = "src/lib.rs"
