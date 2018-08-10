@@ -239,6 +239,7 @@ impl Scheduler for LeveledScheduler{
             })
         }
 
+        debug!("Finished");
         outputs.iter()
             .map(|h| dsam.lock().unwrap().get(&h))
             .collect()

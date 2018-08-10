@@ -3,8 +3,9 @@ extern crate tange;
 pub mod utils;
 
 use std::any::Any;
-use std::hash::Hash;
+use std::hash::{Hasher,Hash};
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use tange::scheduler::Scheduler;
@@ -57,6 +58,10 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
             agg
         });
         Collection { partitions: out }
+    }
+    
+    pub fn split(&self, n_chunks: usize) -> Collection<A> {
+        self.partition(n_chunks, |idx, _k| idx)
     }
 
     pub fn partition<F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize>(&self, partitions: usize, f: F) -> Collection<A> {
@@ -133,6 +138,19 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         Collection { partitions: vec![output] }
     }
 
+                   
+    pub fn partition_by_key<
+        K: Any + Sync + Send + Clone + Hash + Eq,
+        F: 'static + Sync + Send + Clone + Fn(&A) -> K
+    >(&self, n_chunks: usize, key: F) -> Collection<A> {
+        self.partition(n_chunks, move |_idx, v| {
+            let k = key(v);
+            let mut hasher = DefaultHasher::new();
+            k.hash(&mut hasher);
+            hasher.finish() as usize
+        })
+    }
+
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<Vec<A>> {
         let cat = tree_reduce(&self.partitions, |x, y| {
             let mut v1: Vec<_> = (*x).clone();
@@ -161,3 +179,19 @@ impl <A: Any + Send + Sync + Clone> Collection<Vec<A>> {
     }
 }
 
+impl <A: Any + Send + Sync + Clone> Collection<A> {
+    pub fn count(&self) -> Collection<usize> {
+        let nps = batch_apply(&self.partitions, |vs| vs.len());
+        let count = tree_reduce(&nps, |x, y| x + y).unwrap();
+        let out = count.apply(|x| vec![*x]);
+        Collection { partitions: vec![out] }
+    }
+}
+
+// Statistics 
+impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> Collection<A> {
+    pub fn frequencies(&self) -> Collection<(A, usize)> {
+        //self.partition(chunks, |x| x);
+        self.fold_by(|s| s.clone(), || 0usize, |acc, _l| *acc + 1, |x, y| *x + *y)
+    }
+}
