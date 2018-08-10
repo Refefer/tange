@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Andrew Stanton <astanton@etsy.com>"]
 
 [dependencies]
-tange = { path = "../tange" }
+tange = { path = "../tange-core" }
 
 [lib]
 name = "tange_collection"
