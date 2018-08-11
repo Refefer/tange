@@ -373,7 +373,7 @@ impl Scheduler for GreedyScheduler{
 
         // Make the graph a bit easier to work with
         let mut head_map: HashMap<_,_> = collapsed.into_iter().map(|(chain, deps)| {
-            (chain[chain.len() - 1].clone(), (chain, deps.len(), deps))
+            (chain[0].clone(), (chain, deps.len(), deps))
         }).collect();
 
         // Load up the inputs
@@ -388,8 +388,8 @@ impl Scheduler for GreedyScheduler{
         trace!("Output: {:?}", outputs);
 
         if log_enabled!(Trace) {
-            for (ref _k, &(ref chain, ref _priority, ref deps)) in head_map.iter() {
-                trace!("Chain: {:?}, Deps: {:?}", chain, deps);
+            for (ref index, &(ref chain, ref _priority, ref deps)) in head_map.iter() {
+                trace!("Index: {:?}, Chain: {:?}, Deps: {:?}", index, chain, deps);
             }
         }
         {
