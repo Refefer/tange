@@ -443,6 +443,14 @@ impl Scheduler for GreedyScheduler{
             pool.shutdown();
         }
 
+        if log_enabled!(Trace) {
+            let ds = dsam.lock().unwrap();
+            trace!("Still Holding data for:");
+            for (k, _v) in ds.data.iter() {
+                trace!("- {:?}", k);
+            }
+        }
+
         debug!("Finished");
         outputs.iter()
             .map(|h| dsam.lock().unwrap().get(&h))
