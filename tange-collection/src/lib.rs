@@ -2,7 +2,10 @@ extern crate tange;
 
 pub mod utils;
 
+use std::fs;
 use std::any::Any;
+use std::io::prelude::*;
+use std::io::BufWriter;
 use std::hash::{Hasher,Hash};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -37,7 +40,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
     }
     
     pub fn map<B: Any + Send + Sync + Clone, F: 'static + Sync + Send + Clone + Fn(&A) -> B>(&self, f: F) -> Collection<B> {
-        let out = batch_apply(&self.partitions, move |vs| {
+        let out = batch_apply(&self.partitions, move |_idx, vs| {
             let mut agg = Vec::with_capacity(vs.len());
             for v in vs {
                 agg.push(f(v));
@@ -48,7 +51,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
     }
 
     pub fn filter<F: 'static + Sync + Send + Clone + Fn(&A) -> bool>(&self, f: F) -> Collection<A> {
-        let out = batch_apply(&self.partitions, move |vs| {
+        let out = batch_apply(&self.partitions, move |_idx, vs| {
             let mut agg = Vec::with_capacity(vs.len());
             for v in vs {
                 if f(v) {
@@ -66,7 +69,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
 
     pub fn partition<F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize>(&self, partitions: usize, f: F) -> Collection<A> {
         // Group into buckets 
-        let stage1 = batch_apply(&self.partitions, move |vs| {
+        let stage1 = batch_apply(&self.partitions, move |_idx, vs| {
             let mut parts = vec![Vec::new(); partitions];
             for (idx, x) in vs.iter().enumerate() {
                 let p = f(idx, x) % partitions;
@@ -110,7 +113,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
     ) -> Collection<(K,B)> {
 
         // First stage is to reduce each block internally
-        let stage1 = batch_apply(&self.partitions, move |vs| {
+        let stage1 = batch_apply(&self.partitions, move |_idx, vs| {
             let mut reducer = HashMap::new();
             for v in vs {
                 let k = key(v);
@@ -151,6 +154,20 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         })
     }
 
+    pub fn sort_by<
+        K: Ord,
+        F: 'static + Sync + Send + Clone + Fn(&A) -> K
+    >(&self, key: F) -> Collection<A> {
+        let nps = batch_apply(&self.partitions, move |_idx, vs| {
+            let mut v2: Vec<_> = vs.clone();
+            //let v2 = vs.iter().map(|vi| vi.clone()).collect();
+            v2.sort_by_key(|v| key(v));
+            v2
+        });
+        Collection { partitions: nps }
+    }
+
+
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<Vec<A>> {
         let cat = tree_reduce(&self.partitions, |x, y| {
             let mut v1: Vec<_> = (*x).clone();
@@ -165,7 +182,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
 
 impl <A: Any + Send + Sync + Clone> Collection<Vec<A>> {
     pub fn flatten(&self) -> Collection<A> {
-        let nps = batch_apply(&self.partitions, |vss| {
+        let nps = batch_apply(&self.partitions, |_idx, vss| {
             let mut new_v = Vec::new();
             for vs in vss {
                 for v in vs {
@@ -181,17 +198,40 @@ impl <A: Any + Send + Sync + Clone> Collection<Vec<A>> {
 
 impl <A: Any + Send + Sync + Clone> Collection<A> {
     pub fn count(&self) -> Collection<usize> {
-        let nps = batch_apply(&self.partitions, |vs| vs.len());
+        let nps = batch_apply(&self.partitions, |_idx, vs| vs.len());
         let count = tree_reduce(&nps, |x, y| x + y).unwrap();
         let out = count.apply(|x| vec![*x]);
         Collection { partitions: vec![out] }
     }
 }
 
-// Statistics 
 impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> Collection<A> {
     pub fn frequencies(&self) -> Collection<(A, usize)> {
         //self.partition(chunks, |x| x);
         self.fold_by(|s| s.clone(), || 0usize, |acc, _l| *acc + 1, |x, y| *x + *y)
+    }
+}
+
+// Writes out data
+impl Collection<String> {
+    pub fn sink(&self, path: &'static str) -> Collection<usize> {
+        let pats = batch_apply(&self.partitions, move |idx, vs| {
+            fs::create_dir_all(path)
+                .expect("Welp, something went terribly wrong when creating directory");
+
+            let file = fs::File::create(&format!("{}/{}", path, idx))
+                .expect("Issues opening file!");
+            let mut bw = BufWriter::new(file);
+
+            let size = vs.len();
+            for line in vs {
+                bw.write(line.as_bytes()).expect("Error writing out line");
+                bw.write(b"\n").expect("Error writing out line");
+            }
+
+            vec![size]
+        });
+        
+        Collection { partitions: pats }
     }
 }

@@ -70,11 +70,16 @@ impl <A: Any + Send + Sync + Clone> Deferred<A> {
     }
 }
 
-pub fn batch_apply<A: Any + Send + Sync + Clone, B: Any + Send + Sync, F: 'static + Sync + Send + Clone + Fn(&A) -> B>(defs: &[Deferred<A>], f: F) -> Vec<Deferred<B>> {
+pub fn batch_apply<
+    A: Any + Send + Sync + Clone, 
+    B: Any + Send + Sync, 
+    F: 'static + Sync + Send + Clone + Fn(usize, &A) -> B
+    >(defs: &[Deferred<A>], f: F) 
+-> Vec<Deferred<B>> {
     let mut nps = Vec::with_capacity(defs.len());
-    for p in defs.iter() {
+    for (idx, p) in defs.iter().enumerate() {
         let mf = f.clone();
-        let np = p.apply(move |vs| { mf(vs) }); 
+        let np = p.apply(move |vs| { mf(idx, vs) }); 
         nps.push(np);
     }   
     nps 
@@ -86,10 +91,22 @@ pub fn tree_reduce<A: Any + Send + Sync + Clone,
     defs: &[Deferred<A>], 
     f: F
 ) -> Option<Deferred<A>> {
+    tree_reduce_until(defs, 1, f).map(|mut defs| {
+        defs.remove(0)
+    })
+}
+
+pub fn tree_reduce_until<A: Any + Send + Sync + Clone, 
+                   F: 'static + Sync + Send + Clone + Fn(&A, &A) -> A
+>(
+    defs: &[Deferred<A>], 
+    parts: usize, 
+    f: F
+) -> Option<Vec<Deferred<A>>> {
     if defs.len() == 0 {
         None
-    } else if defs.len() == 1 {
-        Some(defs[0].clone())
+    } else if defs.len() <= parts {
+        Some(defs.clone().to_vec())
     } else {
         // First pass
         let mut pass = Vec::new();
@@ -97,9 +114,9 @@ pub fn tree_reduce<A: Any + Send + Sync + Clone,
             pass.push(defs[i].join(&defs[i+1], f.clone()));
         }
         if defs.len() % 2 == 1 {
-            pass.push(defs[defs.len() -1].clone());
+            pass.push(defs[defs.len() - 1].clone());
         }
-        tree_reduce(&pass, f)
+        tree_reduce_until(&pass, parts, f)
     }
 }
 

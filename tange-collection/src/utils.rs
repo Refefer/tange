@@ -30,7 +30,7 @@ pub fn read_text(path: &str, chunk_size: u64) -> Result<Collection<String>,Error
     // Got chunks, read in blocks of strings
 }
 
-fn read(chunk: &Chunk) -> Vec<String> {
+fn read(_idx: usize, chunk: &Chunk) -> Vec<String> {
     let f = File::open(&chunk.path)
         .expect("Error when opening file");
     let mut reader = BufReader::new(f);
@@ -39,10 +39,10 @@ fn read(chunk: &Chunk) -> Vec<String> {
 
     let mut start = if chunk.start > 0 { 
         // Skip first line, which is likely a partial line
-        let mut s = String::new();
-        let size = reader.read_line(&mut s)
-            .expect("Should fix this :)");
-        chunk.start + size as u64 
+        let mut s = Vec::new();
+        let size = reader.read_until(b'\n', &mut s)
+            .expect("Error reading line from file!");
+        chunk.start + size as u64
     } else {
         0
     };
