@@ -9,8 +9,9 @@ use std::io::BufWriter;
 use std::hash::{Hasher,Hash};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::sync::Arc;
 
-use tange::deferred::{Deferred, batch_apply, tree_reduce};
+use tange::deferred::{Deferred, batch_apply, tree_reduce, tree_reduce_until};
 use tange::scheduler::Scheduler;
 
 
@@ -103,31 +104,42 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         Collection { partitions: new_chunks }
     }
 
-    pub fn fold_by<K: Any + Sync + Send + Clone + Hash + Eq,
-                   B: Any + Sync + Send + Clone,
-                   D: 'static + Sync + Send + Clone + Fn() -> B, 
-                   F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-                   O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
-                   R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
-        &self, key: F, default: D, binop: O, reduce: R
-    ) -> Collection<(K,B)> {
-
+    fn block_reduce<K: Any + Sync + Send + Clone + Hash + Eq,
+               B: Any + Sync + Send + Clone,
+               D: 'static + Sync + Send + Clone + Fn() -> B, 
+               F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
+               O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B>
+            (&self, key: F, default: D, binop: O) 
+    -> Vec<Deferred<Arc<HashMap<K,B>>>> {
         // First stage is to reduce each block internally
-        let stage1 = batch_apply(&self.partitions, move |_idx, vs| {
+        batch_apply(&self.partitions, move |_idx, vs| {
             let mut reducer = HashMap::new();
             for v in vs {
                 let k = key(v);
                 let e = reducer.entry(k).or_insert_with(&default);
                 *e = binop(e, v);
             }
-            reducer
-        });
+            Arc::new(reducer)
+        })
+    }
 
-        // Second, do block joins
-        let reduction = tree_reduce(&stage1, move |left, right| {
-            let mut nl: HashMap<_,_> = left.clone();
-            for (k, v) in right {
-                nl.entry(k.clone())
+    pub fn fold_by<K: Any + Sync + Send + Clone + Hash + Eq,
+                   B: Any + Sync + Send + Clone,
+                   D: 'static + Sync + Send + Clone + Fn() -> B, 
+                   F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
+                   O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
+                   R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
+        &self, key: F, default: D, binop: O, reduce: R, partitions: usize
+    ) -> Collection<(K,B)> {
+
+        let stage1 = self.block_reduce(key, default, binop);
+        
+        // Second, do block joins up until partition size
+        let p = if partitions != 1 { 1 } else {partitions};
+        let reduction = tree_reduce_until(&stage1, p, move |left, right| {
+            let mut nl: HashMap<_,_> = left.try_unwrap().unwrap();
+            for (k, v) in right.try_unwrap().unwrap().into_iter() {
+                nl.entry(k)
                     .and_modify(|e| *e = reduce(e, v))
                     .or_insert(v.clone()); 
             }
@@ -135,9 +147,17 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         });
 
         // Flatten
-        let output = reduction.unwrap().apply(|vs| {
+        let mut flattened = batch_apply(&reduction.unwrap(), |_idx, vs| {
             vs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         });
+
+        // We need to do a key merge if morethan 1 partition
+        let output = if partitions > 1 {
+            flattened.remove(0)
+        } else {
+            flattened.remove(0)
+        };
+
         Collection { partitions: vec![output] }
     }
 
@@ -206,9 +226,13 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
 }
 
 impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> Collection<A> {
-    pub fn frequencies(&self) -> Collection<(A, usize)> {
+    pub fn frequencies(&self, partitions: usize) -> Collection<(A, usize)> {
         //self.partition(chunks, |x| x);
-        self.fold_by(|s| s.clone(), || 0usize, |acc, _l| *acc + 1, |x, y| *x + *y)
+        self.fold_by(|s| s.clone(), 
+                     || 0usize, 
+                     |acc, _l| *acc + 1, 
+                     |x, y| *x + *y, 
+                     partitions)
     }
 }
 
