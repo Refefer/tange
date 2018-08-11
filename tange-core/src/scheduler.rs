@@ -1,15 +1,22 @@
 extern crate rayon;
 extern crate log;
+extern crate priority_queue;
+extern crate jobpool;
 
-use std::sync::{Mutex,Arc};
+use std::sync::{Mutex,Arc,mpsc};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use log::Level::{Debug as LDebug};
+use log::Level::{Trace,Debug as LDebug};
 use self::rayon::prelude::*;
+use self::priority_queue::PriorityQueue;
+use self::jobpool::JobPool;
 
 use task::{BASS,DynArgs};
 use graph::{Graph,Task,Handle,FnArgs};
+
+type DepGraph = HashMap<Arc<Handle>, HashSet<Arc<Handle>>>; 
+type ChainGraph = HashMap<Vec<Arc<Handle>>, HashSet<Arc<Handle>>>; 
 
 #[derive(Debug)]
 struct DataStore<K: PartialEq + Hash + Eq, V> {
@@ -45,7 +52,7 @@ impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
 
 
 pub trait Scheduler {
-    fn compute(&mut self, graph: &Graph, outputs: &[Arc<Handle>]) -> Option<Vec<Arc<BASS>>>; 
+    fn compute(&mut self, graph: Arc<Graph>, outputs: &[Arc<Handle>]) -> Option<Vec<Arc<BASS>>>; 
 }
 
 enum Limbo {
@@ -70,10 +77,11 @@ fn get_fnargs(ds: &mut DataStore<Arc<Handle>,Arc<BASS>>, fa: &FnArgs) -> Option<
     }
 }
 
-
-fn build_dep_graph(graph: &Graph) -> HashMap<Arc<Handle>, HashSet<Arc<Handle>>> {
+// Converts a flattened graph into a dependency list
+fn build_dep_graph(graph: &Graph) -> (DepGraph, DepGraph) {
     // Build out dependencies
-    let mut deps: HashMap<Arc<Handle>, HashSet<Arc<Handle>>> = HashMap::new();
+    let mut inbound: DepGraph = HashMap::new();
+    let mut outbound: DepGraph = HashMap::new();
     for (output, ref inputs) in graph.dependencies.iter() {
         let mut hs = HashSet::new();
         if let Some(inp) = inputs {
@@ -86,13 +94,18 @@ fn build_dep_graph(graph: &Graph) -> HashMap<Arc<Handle>, HashSet<Arc<Handle>>> 
                 },
             };
         }
-        deps.insert(output.clone(), hs);
+        // Add outbound
+        for h in hs.iter() {
+            let e = outbound.entry(h.clone()).or_insert_with(|| HashSet::new());
+            e.insert(output.clone());
+        }
+        inbound.insert(output.clone(), hs);
     }
-
-    deps
+    (inbound, outbound)
 }
 
-fn generate_levels(collapsed: HashMap<Vec<Arc<Handle>>, HashSet<Arc<Handle>>>) -> Vec<Vec<Vec<Arc<Handle>>>> {
+// Constructs a set of nodes that have no dependencies between them
+fn generate_levels(collapsed: ChainGraph) -> Vec<Vec<Vec<Arc<Handle>>>> {
     // Create outbound
     let mut outbound = HashMap::new();
     for (nodes, deps) in collapsed.iter() {
@@ -151,99 +164,54 @@ fn generate_levels(collapsed: HashMap<Vec<Arc<Handle>>, HashSet<Arc<Handle>>>) -
     levels
 }
 
-pub struct LeveledScheduler;
-
-impl Scheduler for LeveledScheduler{
-
-    fn compute(
-        &mut self, 
-        graph: &Graph, 
-        outputs: &[Arc<Handle>]
-    ) -> Option<Vec<Arc<BASS>>> {
-        
-        debug!("Number of Tasks Specified: {}", graph.tasks.len());
-
-        let deps = build_dep_graph(graph);
-
-        let collapsed = collapse_graph(deps);
-
-        debug!("Number of Tasks to Run: {}", collapsed.len());
-        
-        // Build the counts
-        let mut counts: HashMap<Arc<Handle>,_> = HashMap::new();
-        for (_k, vs) in collapsed.iter() {
-            for v in vs.iter() {
-                let e = counts.entry(v.clone()).or_insert(0usize);
-                *e += 1;
-            }
+fn run_task(
+    graph: &Graph, 
+    chain: &[Arc<Handle>], 
+    dsam: Arc<Mutex<DataStore<Arc<Handle>, Arc<BASS>>>> 
+) {
+    // Pull out arguments from the datasource
+    trace!("Reading dependencies for chain {:?}", chain[0]);
+    let ot = graph.dependencies.get(&chain[0]);
+    let mut largs = {
+        let ds: &mut DataStore<_,_> = &mut *dsam.lock().unwrap();
+        // Get inputs
+        match ot {
+            Some(Some(ar)) => get_fnargs(ds, &ar),
+            _              => None
         }
+    };
 
-        // Build out the levels
-        let levels = generate_levels(collapsed);
-        
-        // Load up the inputs
-        let data: HashMap<Arc<Handle>,Arc<BASS>> = HashMap::new();
-
-        // Add all handles
-        let raw_ds: DataStore<Arc<Handle>, Arc<BASS>> = DataStore::new(data, counts);
-        let dsam = Arc::new(Mutex::new(raw_ds));
-
-        for (i, level) in levels.into_iter().enumerate() {
-            debug!("Running level: {}", i);
-            // Run graph
-            level.par_iter().for_each(|chain| {
-
-                // Pull out arguments from the datasource
-                trace!("Reading dependencies for chain {:?}", chain[0]);
-                let ot = graph.dependencies.get(&chain[0]);
-                let mut largs = {
-                    let ds: &mut DataStore<_,_> = &mut *dsam.lock().unwrap();
-                    // Get inputs
-                    match ot {
-                        Some(Some(ar)) => get_fnargs(ds, &ar),
-                        _              => None
-                    }
-                };
-
-                for handle in chain {
-                    trace!("Processing handle: {:?}", handle);
-                    let out = match graph.tasks.get(handle) {
-                        Some(ref task) => {
-                            let task_ref: &Task = &task;
-                            match task_ref {
-                                Task::Input(ref input) => Some(input.read()),
-                                Task::Function(ref t) => {
-                                    match largs {
-                                        Some(Limbo::One(ref a)) => {
-                                            t.eval(DynArgs::One(a))
-                                        },
-                                        Some(Limbo::Two(ref a, ref b)) => {
-                                            t.eval(DynArgs::Two(a, b))
-                                        },
-                                        None => None
-                                    }
-                                }
-                            }
-                        },
-                        None => None
-                    };
-                    if let Some(bass) = out {
-                        largs = Some(Limbo::One(Arc::new(bass)));
+    for handle in chain {
+        trace!("Processing handle: {:?}", handle);
+        let out = match graph.tasks.get(handle) {
+            Some(ref task) => {
+                let task_ref: &Task = &task;
+                match task_ref {
+                    Task::Input(ref input) => Some(input.read()),
+                    Task::Function(ref t) => {
+                        match largs {
+                            Some(Limbo::One(ref a)) => {
+                                t.eval(DynArgs::One(a))
+                            },
+                            Some(Limbo::Two(ref a, ref b)) => {
+                                t.eval(DynArgs::Two(a, b))
+                            },
+                            None => None
+                        }
                     }
                 }
-
-                if let Some(Limbo::One(d)) = largs {
-                    let mut ds = dsam.lock().unwrap();
-                    ds.insert(chain[chain.len() - 1].clone(), d);
-                } 
-            })
+            },
+            None => None
+        };
+        if let Some(bass) = out {
+            largs = Some(Limbo::One(Arc::new(bass)));
         }
-
-        debug!("Finished");
-        outputs.iter()
-            .map(|h| dsam.lock().unwrap().get(&h))
-            .collect()
     }
+
+    if let Some(Limbo::One(d)) = largs {
+        let mut ds = dsam.lock().unwrap();
+        ds.insert(chain[chain.len() - 1].clone(), d);
+    } 
 }
 
 // Finds chains of tasks that can be collapsed into a single task
@@ -279,6 +247,7 @@ fn collapse_graph<K: Hash + Eq + Debug + Clone>(
         if let Some(mut chain) = roots.pop() {
             let link = {
                 let tail = &chain[chain.len() - 1];
+
                 // If outbound == 1 and that refernce only has one inbound
                 if outbound[tail].len() == 1 && inbound[&outbound[tail][0]].len() == 1 {
                     // We found a link in a chain
@@ -312,6 +281,173 @@ fn collapse_graph<K: Hash + Eq + Debug + Clone>(
     }
 
     new_nodes
+}
+
+pub struct LeveledScheduler;
+
+impl Scheduler for LeveledScheduler{
+
+    fn compute(
+        &mut self, 
+        graph: Arc<Graph>, 
+        outputs: &[Arc<Handle>]
+    ) -> Option<Vec<Arc<BASS>>> {
+        
+        debug!("Number of Tasks Specified: {}", graph.tasks.len());
+
+        let (inbound, _outbound) = build_dep_graph(&graph);
+
+        let collapsed = collapse_graph(inbound);
+
+        debug!("Number of Tasks to Run: {}", collapsed.len());
+        
+        // Build the counts
+        let mut counts: HashMap<Arc<Handle>,_> = HashMap::new();
+        for (_k, vs) in collapsed.iter() {
+            for v in vs.iter() {
+                let e = counts.entry(v.clone()).or_insert(0usize);
+                *e += 1;
+            }
+        }
+
+        // Build out the levels
+        let levels = generate_levels(collapsed);
+        
+        // Load up the inputs
+        let data: HashMap<Arc<Handle>,Arc<BASS>> = HashMap::new();
+
+        // Add all handles
+        let raw_ds: DataStore<Arc<Handle>, Arc<BASS>> = DataStore::new(data, counts);
+        let dsam = Arc::new(Mutex::new(raw_ds));
+
+        for (i, level) in levels.into_iter().enumerate() {
+            debug!("Running level: {}", i);
+            // Run graph
+            level.par_iter().for_each(|chain| { run_task(&graph, chain, dsam.clone())})
+                
+        }
+
+        debug!("Finished");
+        outputs.iter()
+            .map(|h| dsam.lock().unwrap().get(&h))
+            .collect()
+    }
+}
+
+pub struct GreedyScheduler(usize);
+
+impl GreedyScheduler {
+    pub fn new(n_threads: usize) -> Self { GreedyScheduler(n_threads) }
+}
+
+impl Scheduler for GreedyScheduler{
+
+    fn compute(
+        &mut self, 
+        graph: Arc<Graph>, 
+        outputs: &[Arc<Handle>]
+    ) -> Option<Vec<Arc<BASS>>> {
+        
+        debug!("Number of Tasks Specified: {}", graph.tasks.len());
+
+        let (inbound, mut outbound) = build_dep_graph(&graph);
+
+        let collapsed = collapse_graph(inbound);
+
+        debug!("Number of Tasks to Run: {}", collapsed.len());
+        
+        // Build the counts
+        let mut counts: HashMap<Arc<Handle>,_> = HashMap::new();
+        let mut queue = PriorityQueue::new();
+        for (chain, deps) in collapsed.iter() {
+            // Add the inputs
+            if deps.len() == 0 {
+                queue.push(chain.clone(), 0usize);
+            }
+
+            for d in deps.iter() {
+                let e = counts.entry(d.clone()).or_insert(0usize);
+                *e += 1;
+            }
+        }
+
+        // Make the graph a bit easier to work with
+        let mut head_map: HashMap<_,_> = collapsed.into_iter().map(|(chain, deps)| {
+            (chain[chain.len() - 1].clone(), (chain, deps.len(), deps))
+        }).collect();
+
+        // Load up the inputs
+        let data: HashMap<Arc<Handle>,Arc<BASS>> = HashMap::new();
+
+        // Initialize an empty data store
+        let raw_ds: DataStore<Arc<Handle>, Arc<BASS>> = DataStore::new(data, counts);
+        let dsam = Arc::new(Mutex::new(raw_ds));
+
+        // Start the loop!
+
+        trace!("Output: {:?}", outputs);
+
+        if log_enabled!(Trace) {
+            for (ref _k, &(ref chain, ref _priority, ref deps)) in head_map.iter() {
+                trace!("Chain: {:?}, Deps: {:?}", chain, deps);
+            }
+        }
+        {
+            let mut pool = JobPool::new(self.0);
+            let mut free_threads = self.0;
+            let (tx, rx) = mpsc::channel();
+            loop {
+                // Queue up all free items
+                while free_threads > 0 && !queue.is_empty(){
+                    if let Some((chain, _priority)) = queue.pop() {
+                        trace!("Training chain: {:?}", chain);
+                        let g = graph.clone();
+                        let c = chain.clone();
+                        let d = dsam.clone();
+                        let thread_tx = tx.clone();
+                        pool.queue(move || {
+                            run_task(&g, &c, d);
+                            thread_tx.send(c[c.len() - 1].clone())
+                                .expect("Error sending thread!");
+                        });
+                        free_threads -= 1;
+                    } 
+                }
+
+                // Eat!
+                let handle = rx.recv().unwrap(); 
+                // Remove it as deps from remaining tasks
+                trace!("{:?} finished", handle);
+                free_threads += 1;
+                if let Some(out) = outbound.remove(&handle) {
+                    for out_handle in out {
+                        trace!("Updating {:?}", out_handle);
+                        if let Some((chain, p, deps)) = head_map.get_mut(&out_handle) {
+                            trace!("Updating {:?}", out_handle);
+                            deps.remove(&handle);
+                            if deps.is_empty() {
+                                trace!("Adding new chain: {:?}", chain);
+                                queue.push(chain.clone(), *p);
+                            } else {
+                                trace!("Remaining Deps: {:?}", deps);
+                            }
+                        }
+                    }
+                }
+
+                // Are we done yet?
+                if free_threads == self.0 && queue.is_empty() {
+                    break
+                }
+            }
+            pool.shutdown();
+        }
+
+        debug!("Finished");
+        outputs.iter()
+            .map(|h| dsam.lock().unwrap().get(&h))
+            .collect()
+    }
 }
 
 #[cfg(test)]

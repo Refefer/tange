@@ -16,7 +16,7 @@ impl <A: Any + Send + Sync + Clone> Input for Lift<A> {
 
 #[derive(Clone)]
 pub struct Deferred<A> {
-    graph: Graph,
+    graph: Arc<Graph>,
     items: PhantomData<A>,
     handle: Arc<Handle>
 }
@@ -24,11 +24,11 @@ pub struct Deferred<A> {
 impl <A: Any + Send + Sync> Deferred<A> {
     
     pub fn apply<B: Any + Send + Sync, F: Send + Sync + 'static + Fn(&A) -> B>(&self, f: F) -> Deferred<B> {
-        let mut ng = self.graph.clone();
+        let mut ng: Graph = Graph::clone(&self.graph);
         let handle = ng.add_task(
             FnArgs::Single(self.handle.clone()), DynFn::new(f), "Apply");
         Deferred {
-            graph: ng,
+            graph: Arc::new(ng),
             items: PhantomData,
             handle: handle 
         }
@@ -42,7 +42,7 @@ impl <A: Any + Send + Sync> Deferred<A> {
             DynFn2::new(f), "Join");
 
         Deferred {
-            graph: ng,
+            graph: Arc::new(ng),
             items: PhantomData,
             handle: handle 
         }
@@ -55,14 +55,14 @@ impl <A: Any + Send + Sync + Clone> Deferred<A> {
         let mut graph = Graph::new();
         let handle = graph.add_input(Lift(a), name.unwrap_or("Input"));
         Deferred {
-            graph: graph,
+            graph: Arc::new(graph),
             items: PhantomData,
             handle: handle
         }
     }
 
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<A> {
-        s.compute(&self.graph, &[self.handle.clone()]).and_then(|mut vs| { 
+        s.compute(self.graph.clone(), &[self.handle.clone()]).and_then(|mut vs| { 
             Arc::try_unwrap(vs.remove(0)).ok().and_then(|ab| {
                 ab.downcast_ref::<A>().map(|x| x.clone())
             })
@@ -123,7 +123,7 @@ pub fn tree_reduce_until<A: Any + Send + Sync + Clone,
 #[cfg(test)]
 mod def_test {
     use super::*;
-    use scheduler::LeveledScheduler;
+    use scheduler::{LeveledScheduler,GreedyScheduler};
 
     #[test]
     fn test_tree_reduce() {
@@ -137,4 +137,18 @@ mod def_test {
         let results = agg.run(&mut LeveledScheduler);
         assert_eq!(results, Some(res));
     }
+
+    #[test]
+    fn test_tree_reduce_greedy() {
+        let v: Vec<_> = (0..2usize).into_iter()
+            .map(|x| Deferred::lift(x, None))
+            .collect();
+
+        let res = (0..2usize).sum();
+
+        let agg = tree_reduce(&v, |x, y| x + y).unwrap();
+        let results = agg.run(&mut GreedyScheduler::new(1));
+        assert_eq!(results, Some(res));
+    }
+
 }

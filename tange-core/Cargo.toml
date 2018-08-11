@@ -6,6 +6,8 @@ authors = ["Andrew Stanton <astanton@etsy.com>"]
 [dependencies]
 rayon = "1.0"
 log = "0.4"
+priority-queue = "0.5.1"
+jobpool = "0.3.8"
 
 [lib]
 name = "tange"
