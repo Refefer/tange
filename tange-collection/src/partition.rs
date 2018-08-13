@@ -224,7 +224,6 @@ pub fn join_on_key<
     C: Any + Sync + Send + Clone,
     J: 'static + Sync + Send + Clone + Fn(&A, &B) -> C
 >(
-    
     d1: &Deferred<Vec<(K, A)>>, 
     d2: &Deferred<Vec<(K, B)>>, 
     joiner: J

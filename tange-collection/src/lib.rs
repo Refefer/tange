@@ -67,7 +67,24 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         self.partition(n_chunks, |idx, _k| idx)
     }
 
-    pub fn partition<F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize>(&self, partitions: usize, f: F) -> Collection<A> {
+    pub fn emit<
+        B: Any + Send + Sync + Clone,
+        F: 'static + Sync + Send + Clone + Fn(&A, &mut FnMut(B) -> ())
+    >(&self, f: F) -> Collection<B> {
+        let parts = batch_apply(&self.partitions, move |_idx, vs| {
+            let mut out = Vec::new();
+            for v in vs {
+                f(v, &mut |r| out.push(r));
+            }
+            out
+        });
+
+        Collection { partitions: parts }
+    }
+
+    pub fn partition<
+        F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
+    >(&self, partitions: usize, f: F) -> Collection<A> {
         let new_chunks = partition(&self.partitions, 
                                    partitions, 
                                    |v| Box::new(v.clone().into_iter()),
@@ -110,7 +127,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         Collection { partitions: nps }
     }
 
-    pub fn cross_on<
+    pub fn join_on<
         K: Any + Sync + Send + Clone + Hash + Eq,
         KF1: 'static + Sync + Send + Clone + Fn(&A) -> K,
         B: Any + Sync + Send + Clone,
@@ -266,11 +283,25 @@ mod test_lib {
     fn test_join() {
         let col1 = Collection::from_vec(vec![1,2,3,1,2usize]);
         let col2 = Collection::from_vec(vec![2, 3usize]);
-        let out = col1.cross_on(&col2, 5, |x| *x, |y| *y, |x, y| {
+        let out = col1.join_on(&col2, 5, |x| *x, |y| *y, |x, y| {
             (*x, *y)
         }).split(1).sort_by(|x| x.0);
         let results = out.run(&mut LeveledScheduler).unwrap();
         let expected = vec![(2, (2, 2)), (2, (2, 2)), (3, (3, 3))];
+        assert_eq!(results, expected);
+    }
+
+    #[test]
+    fn test_emit() {
+        let results = Collection::from_vec(vec![1,2,3usize])
+            .emit(|num, emitter| {
+                for i in 0..*num {
+                    emitter(i);
+                }
+            })
+            .sort_by(|x| *x)
+            .run(&mut LeveledScheduler).unwrap();
+        let expected = vec![0, 0, 0, 1, 1, 2];
         assert_eq!(results, expected);
     }
 
