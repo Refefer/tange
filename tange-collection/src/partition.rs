@@ -228,7 +228,7 @@ pub fn join_on_key<
     d1: &Deferred<Vec<(K, A)>>, 
     d2: &Deferred<Vec<(K, B)>>, 
     joiner: J
-) -> Deferred<Vec<C>> {
+) -> Deferred<Vec<(K,C)>> {
     d1.join(d2, move |left, right| {
         // Slurp up left into a hashmap
         let mut hm = HashMap::new();
@@ -240,7 +240,7 @@ pub fn join_on_key<
         for (k, rv) in right.iter() {
             if let Some(lvs) = hm.get(k) {
                 for lv in lvs.iter() {
-                    ret.push(joiner(lv, rv))
+                    ret.push((k.clone(), joiner(lv, rv)))
                 }
             }
         }

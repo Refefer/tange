@@ -124,7 +124,7 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         key1: KF1, 
         key2: KF2,
         joiner: J
-    ) -> Collection<C> {
+    ) -> Collection<(K,C)> {
         // Group each by a common key
         let p1 = self.map(move |x| (key1(x), x.clone()))
             .partition_by_key(partitions, |x| x.0.clone());
@@ -270,7 +270,7 @@ mod test_lib {
             (*x, *y)
         }).split(1).sort_by(|x| x.0);
         let results = out.run(&mut LeveledScheduler).unwrap();
-        let expected = vec![(2, 2), (2, 2), (3, 3)];
+        let expected = vec![(2, (2, 2)), (2, (2, 2)), (3, (3, 3))];
         assert_eq!(results, expected);
     }
 
