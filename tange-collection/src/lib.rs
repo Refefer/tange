@@ -1,18 +1,17 @@
 extern crate tange;
 
 pub mod utils;
+mod partition;
 
 use std::fs;
 use std::any::Any;
 use std::io::prelude::*;
 use std::io::BufWriter;
-use std::hash::{Hasher,Hash};
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::sync::Arc;
+use std::hash::Hash;
 
-use tange::deferred::{Deferred, batch_apply, tree_reduce, tree_reduce_until};
+use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use tange::scheduler::Scheduler;
+use self::partition::*;
 
 
 #[derive(Clone)]
@@ -69,58 +68,12 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
     }
 
     pub fn partition<F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize>(&self, partitions: usize, f: F) -> Collection<A> {
-        // Group into buckets 
-        let stage1 = batch_apply(&self.partitions, move |_idx, vs| {
-            let mut parts = vec![Vec::new(); partitions];
-            for (idx, x) in vs.iter().enumerate() {
-                let p = f(idx, x) % partitions;
-                parts[p].push(x.clone());
-            }
-            parts
-        });
-
-        // For each partition in each chunk, pull out at index and regroup.
-        // Tree reduce to concatenate
-        let mut new_chunks = Vec::with_capacity(partitions);
-        for idx in 0usize..partitions {
-            let mut partition = Vec::with_capacity(stage1.len());
-
-            for s in stage1.iter() {
-                partition.push(s.apply(move |parts| parts[idx].clone()));
-            }
-
-            let output = tree_reduce(&partition, |x, y| {
-                let mut v1: Vec<_> = (*x).clone();
-                for yi in y {
-                    v1.push(yi.clone());
-                }
-                v1
-            });
-            if let Some(d) = output {
-                new_chunks.push(d);
-            }
-        }
+        let new_chunks = partition(&self.partitions, 
+                                   partitions, 
+                                   |v| Box::new(v.clone().into_iter()),
+                                   f);
         // Loop over each bucket
         Collection { partitions: new_chunks }
-    }
-
-    fn block_reduce<K: Any + Sync + Send + Clone + Hash + Eq,
-               B: Any + Sync + Send + Clone,
-               D: 'static + Sync + Send + Clone + Fn() -> B, 
-               F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-               O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B>
-            (&self, key: F, default: D, binop: O) 
-    -> Vec<Deferred<Arc<HashMap<K,B>>>> {
-        // First stage is to reduce each block internally
-        batch_apply(&self.partitions, move |_idx, vs| {
-            let mut reducer = HashMap::new();
-            for v in vs {
-                let k = key(v);
-                let e = reducer.entry(k).or_insert_with(&default);
-                *e = binop(e, v);
-            }
-            Arc::new(reducer)
-        })
     }
 
     pub fn fold_by<K: Any + Sync + Send + Clone + Hash + Eq,
@@ -131,34 +84,8 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
                    R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
         &self, key: F, default: D, binop: O, reduce: R, partitions: usize
     ) -> Collection<(K,B)> {
-
-        let stage1 = self.block_reduce(key, default, binop);
-        
-        // Second, do block joins up until partition size
-        let p = if partitions != 1 { 1 } else {partitions};
-        let reduction = tree_reduce_until(&stage1, p, move |left, right| {
-            let mut nl: HashMap<_,_> = left.try_unwrap().unwrap();
-            for (k, v) in right.try_unwrap().unwrap().into_iter() {
-                nl.entry(k)
-                    .and_modify(|e| *e = reduce(e, v))
-                    .or_insert(v.clone()); 
-            }
-            nl
-        });
-
-        // Flatten
-        let mut flattened = batch_apply(&reduction.unwrap(), |_idx, vs| {
-            vs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        });
-
-        // We need to do a key merge if morethan 1 partition
-        let output = if partitions > 1 {
-            flattened.remove(0)
-        } else {
-            flattened.remove(0)
-        };
-
-        Collection { partitions: vec![output] }
+        let results = fold_by(&self.partitions, key, default, binop, reduce, partitions);
+        Collection { partitions: results }
     }
 
                    
@@ -166,12 +93,9 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         K: Any + Sync + Send + Clone + Hash + Eq,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
     >(&self, n_chunks: usize, key: F) -> Collection<A> {
-        self.partition(n_chunks, move |_idx, v| {
-            let k = key(v);
-            let mut hasher = DefaultHasher::new();
-            k.hash(&mut hasher);
-            hasher.finish() as usize
-        })
+        let results = partition_by_key(&self.partitions, n_chunks, key);
+        let groups = results.into_iter().map(|part| concat(&part)).collect();
+        Collection {partitions: groups}
     }
 
     pub fn sort_by<
@@ -180,7 +104,6 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
     >(&self, key: F) -> Collection<A> {
         let nps = batch_apply(&self.partitions, move |_idx, vs| {
             let mut v2: Vec<_> = vs.clone();
-            //let v2 = vs.iter().map(|vi| vi.clone()).collect();
             v2.sort_by_key(|v| key(v));
             v2
         });
@@ -258,4 +181,50 @@ impl Collection<String> {
         
         Collection { partitions: pats }
     }
+}
+
+#[cfg(test)]
+mod test_lib {
+    use super::*;
+    use tange::scheduler::LeveledScheduler;
+
+    #[test]
+    fn test_fold_by() {
+        let col = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 1);
+        let mut results = out.run(&mut LeveledScheduler).unwrap();
+        results.sort();
+        assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
+    }
+
+    #[test]
+    fn test_fold_by_parts() {
+        let col = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 2);
+        assert_eq!(out.partitions.len(), 2);
+        let mut results = out.run(&mut LeveledScheduler).unwrap();
+        results.sort();
+        assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
+    }
+
+    #[test]
+    fn test_partition_by_key() {
+        let col = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let computed = col.partition_by_key(2, |x| *x)
+            .sort_by(|x| *x);
+        assert_eq!(computed.partitions.len(), 2);
+        let results = computed.run(&mut LeveledScheduler).unwrap();
+        assert_eq!(results, vec![2, 2, 3, 1, 1]);
+    }
+
+    #[test]
+    fn test_partition() {
+        let col = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let computed = col.partition(2, |_idx, x| x % 2)
+            .sort_by(|x| *x);
+        assert_eq!(computed.partitions.len(), 2);
+        let results = computed.run(&mut LeveledScheduler).unwrap();
+        assert_eq!(results, vec![2, 2, 1, 1, 3]);
+    }
+
 }
