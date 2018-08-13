@@ -354,7 +354,8 @@ impl Scheduler for GreedyScheduler{
 
         let collapsed = collapse_graph(inbound);
 
-        debug!("Number of Tasks to Run: {}", collapsed.len());
+        let total_jobs = collapsed.len();
+        debug!("Number of Tasks to Run: {}", total_jobs);
         
         // Build the counts
         let mut counts: HashMap<Arc<Handle>,_> = HashMap::new();
@@ -362,6 +363,7 @@ impl Scheduler for GreedyScheduler{
         for (chain, deps) in collapsed.iter() {
             // Add the inputs
             if deps.len() == 0 {
+                trace!("Adding intial chain: {:?}, Priority: {}", chain, 0usize);
                 queue.push(chain.clone(), 0usize);
             }
 
@@ -392,6 +394,8 @@ impl Scheduler for GreedyScheduler{
                 trace!("Index: {:?}, Chain: {:?}, Deps: {:?}", index, chain, deps);
             }
         }
+        debug!("Starting tasks...");
+        let mut jobs_done = 0usize;
         {
             let mut pool = JobPool::new(self.0);
             let mut free_threads = self.0;
@@ -399,8 +403,8 @@ impl Scheduler for GreedyScheduler{
             loop {
                 // Queue up all free items
                 while free_threads > 0 && !queue.is_empty(){
-                    if let Some((chain, _priority)) = queue.pop() {
-                        trace!("Training chain: {:?}", chain);
+                    if let Some((chain, priority)) = queue.pop() {
+                        trace!("Training chain: {:?}, Priority: {}", chain, priority);
                         let g = graph.clone();
                         let c = chain.clone();
                         let d = dsam.clone();
@@ -426,7 +430,7 @@ impl Scheduler for GreedyScheduler{
                             trace!("Updating {:?}", out_handle);
                             deps.remove(&handle);
                             if deps.is_empty() {
-                                trace!("Adding new chain: {:?}", chain);
+                                trace!("Adding new chain: {:?}, Priority: {}", chain, p);
                                 queue.push(chain.clone(), *p);
                             } else {
                                 trace!("Remaining Deps: {:?}", deps);
@@ -435,6 +439,15 @@ impl Scheduler for GreedyScheduler{
                     }
                 }
 
+                jobs_done += 1;
+                if jobs_done % (total_jobs as f64 / 10.) as usize == 0 {
+                    debug!("Finished {}/{} of jobs", jobs_done, total_jobs);
+                    if log_enabled!(Trace) {
+                        let ds = dsam.lock().unwrap();
+                        trace!("Data Chunks in memory: {}", ds.data.len());
+                    }
+
+                }
                 // Are we done yet?
                 if free_threads == self.0 && queue.is_empty() {
                     break

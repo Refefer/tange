@@ -227,4 +227,12 @@ mod test_lib {
         assert_eq!(results, vec![2, 2, 1, 1, 3]);
     }
 
+    #[test]
+    fn test_count() {
+        let col = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let results = col.split(3).count().run(&mut LeveledScheduler).unwrap();
+        assert_eq!(results, vec![5]);
+    }
+
+
 }
