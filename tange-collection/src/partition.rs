@@ -216,3 +216,35 @@ pub fn concat<A: Any + Sync + Send + Clone >(defs: &[Deferred<Vec<A>>]) -> Defer
         v1
     }).unwrap()
 }
+
+pub fn join_on_key<
+    K: Any + Sync + Send + Clone + Hash + Eq,
+    A: Any + Sync + Send + Clone,
+    B: Any + Sync + Send + Clone,
+    C: Any + Sync + Send + Clone,
+    J: 'static + Sync + Send + Clone + Fn(&A, &B) -> C
+>(
+    
+    d1: &Deferred<Vec<(K, A)>>, 
+    d2: &Deferred<Vec<(K, B)>>, 
+    joiner: J
+) -> Deferred<Vec<C>> {
+    d1.join(d2, move |left, right| {
+        // Slurp up left into a hashmap
+        let mut hm = HashMap::new();
+        for (k, lv) in left {
+            let e = hm.entry(k).or_insert_with(|| Vec::with_capacity(1)); 
+            e.push(lv);
+        }
+        let mut ret = Vec::new();
+        for (k, rv) in right.iter() {
+            if let Some(lvs) = hm.get(k) {
+                for lv in lvs.iter() {
+                    ret.push(joiner(lv, rv))
+                }
+            }
+        }
+        ret
+    })
+}
+

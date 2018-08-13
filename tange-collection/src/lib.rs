@@ -110,6 +110,34 @@ impl <A: Any + Send + Sync + Clone> Collection<A> {
         Collection { partitions: nps }
     }
 
+    pub fn cross_on<
+        K: Any + Sync + Send + Clone + Hash + Eq,
+        KF1: 'static + Sync + Send + Clone + Fn(&A) -> K,
+        B: Any + Sync + Send + Clone,
+        KF2: 'static + Sync + Send + Clone + Fn(&B) -> K,
+        C: Any + Sync + Send + Clone,
+        J: 'static + Sync + Send + Clone + Fn(&A, &B) -> C,
+    >(
+        &self, 
+        other: &Collection<B>, 
+        partitions: usize, 
+        key1: KF1, 
+        key2: KF2,
+        joiner: J
+    ) -> Collection<C> {
+        // Group each by a common key
+        let p1 = self.map(move |x| (key1(x), x.clone()))
+            .partition_by_key(partitions, |x| x.0.clone());
+        let p2 = other.map(move |x| (key2(x), x.clone()))
+           .partition_by_key(partitions, |x| x.0.clone());
+
+        let mut new_parts = Vec::with_capacity(p1.partitions.len());
+        for (l, r) in p1.partitions.iter().zip(p2.partitions.iter()) {
+            new_parts.push(join_on_key(l, r, joiner.clone()));
+        }
+
+        Collection { partitions: new_parts }
+    }
 
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<Vec<A>> {
         let cat = tree_reduce(&self.partitions, |x, y| {
@@ -234,5 +262,16 @@ mod test_lib {
         assert_eq!(results, vec![5]);
     }
 
+    #[test]
+    fn test_join() {
+        let col1 = Collection::from_vec(vec![1,2,3,1,2usize]);
+        let col2 = Collection::from_vec(vec![2, 3usize]);
+        let out = col1.cross_on(&col2, 5, |x| *x, |y| *y, |x, y| {
+            (*x, *y)
+        }).split(1).sort_by(|x| x.0);
+        let results = out.run(&mut LeveledScheduler).unwrap();
+        let expected = vec![(2, 2), (2, 2), (3, 3)];
+        assert_eq!(results, expected);
+    }
 
 }
