@@ -4,12 +4,12 @@ use std::fs::{File,metadata};
 
 use tange::deferred::{Deferred, batch_apply};
 
-use Collection;
+use collection::memory::MemoryCollection;
 
 #[derive(Clone)]
 struct Chunk { path: String, start: u64, end: u64 }
 
-pub fn read_text(path: &str, chunk_size: u64) -> Result<Collection<String>,Error> {
+pub fn read_text(path: &str, chunk_size: u64) -> Result<MemoryCollection<String>,Error> {
     // Read the file size
     let file_size = metadata(path)?.len();
     let mut dfs = Vec::new();
@@ -25,9 +25,7 @@ pub fn read_text(path: &str, chunk_size: u64) -> Result<Collection<String>,Error
         cur_offset += chunk_size;
     }
 
-    Ok(Collection { partitions: batch_apply(&dfs, read) })
-
-    // Got chunks, read in blocks of strings
+    Ok(MemoryCollection::from_defs(batch_apply(&dfs, read)))
 }
 
 fn read(_idx: usize, chunk: &Chunk) -> Vec<String> {
