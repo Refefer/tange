@@ -8,7 +8,7 @@ pub trait Accumulator<A>: Send + Sync + Clone  {
 }
 
 pub trait ValueWriter<A>: Sized {
-    type Out: Send + Sync + Any;
+    type Out: Accumulator<A>;
 
     fn add(&mut self, item: A) -> ();
 
@@ -24,7 +24,7 @@ pub trait ValueWriter<A>: Sized {
 #[derive(Clone)]
 pub struct Memory;
 
-impl <A: Any + Send + Sync> Accumulator<A> for Memory {
+impl <A: Any + Send + Sync + Clone> Accumulator<A> for Memory {
     type VW = Vec<A>;
 
     fn writer(&self) -> Self::VW {
@@ -40,7 +40,7 @@ impl <A: Any + Send + Sync + Clone> Accumulator<A> for Vec<A> {
     }
 }
 
-impl <A: Any + Send + Sync> ValueWriter<A> for Vec<A> {
+impl <A: Any + Send + Sync + Clone> ValueWriter<A> for Vec<A> {
     type Out = Vec<A>;
 
     fn add(&mut self, item: A) -> () {

@@ -2,8 +2,8 @@ pub mod memory;
 
 use std::any::Any;
 
-use tange::deferred::{Deferred, batch_apply, tree_reduce};
-use interfaces::{Memory,Accumulator,ValueWriter};
+use tange::deferred::{Deferred, batch_apply};
+use interfaces::{Accumulator,ValueWriter};
 
 fn emit<
     A,

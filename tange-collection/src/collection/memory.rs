@@ -95,7 +95,8 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
                    R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
         &self, key: F, default: D, binop: O, reduce: R, partitions: usize
     ) -> MemoryCollection<(K,B)> {
-        let results = fold_by(&self.partitions, key, default, binop, reduce, Memory, partitions);
+        let results = fold_by(&self.partitions, key, default, binop, 
+                              reduce, Vec::with_capacity(0), partitions);
         MemoryCollection { partitions: results }
     }
 
