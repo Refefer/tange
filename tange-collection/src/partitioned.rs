@@ -38,19 +38,20 @@ pub fn block_reduce<
 }
 
 pub fn split_by_key<
-    Col: Any + Sync + Send + Clone,
+    Col: Any + Sync + Send + Clone + Accumulator<A>,
     A: Any + Send + Sync + Clone,
     F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
 >(
     defs: &[Deferred<Col>], 
     partitions: usize, 
     hash_function: F
-) -> Vec<Vec<Deferred<Vec<A>>>> 
-        where for<'a> &'a Col: IntoIterator<Item=&'a A> {
+) -> Vec<Vec<Deferred<<<Col as Accumulator<A>>::VW as ValueWriter<A>>::Out>>> 
+        where for<'a> &'a Col: IntoIterator<Item=&'a A>,
+              Col::VW: ValueWriter<A,Out=Col> {
 
     // Group into buckets 
     let stage1 = batch_apply(&defs, move |_idx, vs| {
-        let mut parts = vec![Memory.writer(); partitions];
+        let mut parts: Vec<_> = (0..partitions).map(|_| vs.writer()).collect();
         for (idx, x) in vs.into_iter().enumerate() {
             let p = hash_function(idx, x) % partitions;
             parts[p].add(x.clone());
@@ -73,15 +74,16 @@ pub fn split_by_key<
 }
 
 pub fn partition<
-    Col: Any + Sync + Send + Clone,
+    Col: Any + Sync + Send + Clone + Accumulator<A>,
     A: Any + Send + Sync + Clone,
     F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
 >(
     defs: &[Deferred<Col>], 
     partitions: usize, 
     key: F
-) -> Vec<Deferred<Vec<A>>>
-        where for<'a> &'a Col: IntoIterator<Item=&'a A> {
+) -> Vec<Deferred<Col>>
+        where for<'a> &'a Col: IntoIterator<Item=&'a A>, 
+              Col::VW: ValueWriter<A,Out=Col> {
     
     let groups = split_by_key(defs, partitions, key);
     
@@ -275,6 +277,7 @@ pub fn partition_by_key<
     })
 }
 
+/*
 pub fn concat<
     A: Any + Sync + Send + Clone,
     >(defs: &[Deferred<Vec<A>>]) -> Option<Deferred<Vec<A>>> {
@@ -286,6 +289,30 @@ pub fn concat<
         v1
     })
 }
+*/
+
+pub fn concat<
+    Col: Any + Sync + Send + Clone + Accumulator<A>,
+    A: Clone,
+>(
+    defs: &[Deferred<Col>]
+) -> Option<Deferred<Col>>
+        where for<'a> &'a Col: IntoIterator<Item=&'a A>, 
+              Col::VW: ValueWriter<A,Out=Col> {
+
+    tree_reduce(&defs, |x, y| {
+        let mut out = x.writer();
+        for xi in x {
+            out.add(xi.clone());
+        }
+        for yi in y {
+            out.add(yi.clone());
+        }
+        out.finish()
+    })
+}
+
+
 
 pub fn join_on_key<
     Col1: Any + Sync + Send + Clone,
