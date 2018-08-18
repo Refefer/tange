@@ -207,10 +207,10 @@ pub fn fold_by<
     reduce: R, 
     acc: Acc,
     partitions: usize
-) -> Vec<Deferred<Vec<(K,B)>>> 
+) -> Vec<Deferred<<<Acc as Accumulator<(K, B)>>::VW as ValueWriter<(K, B)>>::Out>>
         where for<'a> &'a Col: IntoIterator<Item=&'a A> {
 
-    let output = if partitions == 1 {
+    if partitions == 1 {
         // Cheaper to perform since we don't need to convert to and from HashMaps
         // and vecs, can avoid the split, etc.
         let stage1 = block_reduce(defs, key, default, binop, |x| x);
@@ -218,8 +218,12 @@ pub fn fold_by<
         let reduction = tree_reduce(&stage1, move |l, r| merge_maps(l, r, reduce.clone()));
 
         // Flatten
-        batch_apply(&vec![reduction.unwrap()], |_idx, vs| {
-            vs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        batch_apply(&vec![reduction.unwrap()], move |_idx, vs| {
+            let mut out = acc.writer();
+            for (k, v) in vs {
+                out.add((k.clone(), v.clone()));
+            }
+            out.finish()
         })
 
     } else {
@@ -247,17 +251,17 @@ pub fn fold_by<
         };
         for group in concat {
             let out = tree_reduce(&group, nf.clone());
-            //let out = tree_reduce(&group, move |l, r| merge_maps(l, r, red));
             reduction.push(out.unwrap());
         }
 
-        // Flatten
-        batch_apply(&reduction, |_idx, vs| {
-            vs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        batch_apply(&reduction, move |_idx, vs| {
+            let mut out = acc.writer();
+            for (k, v) in vs {
+                out.add((k.clone(), v.clone()));
+            }
+            out.finish()
         })
-    };
-
-    output
+    }
 }
 
 pub fn partition_by_key<
