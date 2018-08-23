@@ -1,9 +1,13 @@
+extern crate serde;
 use std::fs;
 use std::any::Any;
 use std::io::prelude::*;
 use std::io::BufWriter;
 use std::hash::Hash;
 
+use self::serde::{Deserialize,Serialize};
+
+use collection::disk::DiskCollection;
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use tange::scheduler::Scheduler;
 use partitioned::{join_on_key as jok, partition, partition_by_key, fold_by, concat};
@@ -213,6 +217,13 @@ impl MemoryCollection<String> {
         });
         
         MemoryCollection { partitions: pats }
+    }
+}
+
+impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> MemoryCollection<A> {
+
+    pub fn to_disk(&self, path: String) -> DiskCollection<A> {
+        DiskCollection::from_memory(path, &self.partitions)
     }
 }
 

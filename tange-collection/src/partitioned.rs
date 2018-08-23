@@ -64,7 +64,7 @@ pub fn split_by_key<
         let mut partition = Vec::with_capacity(stage1.len());
 
         for s in stage1.iter() {
-            partition.push(s.apply(move |parts| parts[idx].clone()));
+            partition.push(s.apply(move |parts| parts[idx].copy()));
         }
         splits.push(partition);
     }

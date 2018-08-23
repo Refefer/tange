@@ -77,8 +77,9 @@ pub fn batch_apply<
     >(defs: &[Deferred<A>], f: F) 
 -> Vec<Deferred<B>> {
     let mut nps = Vec::with_capacity(defs.len());
+    let fa = Arc::new(f);
     for (idx, p) in defs.iter().enumerate() {
-        let mf = f.clone();
+        let mf = fa.clone();
         let np = p.apply(move |vs| { mf(idx, vs) }); 
         nps.push(np);
     }   

@@ -3,7 +3,7 @@ extern crate bincode;
 extern crate uuid;
 
 use std::any::Any;
-use std::fs::File;
+use std::fs::{File,remove_file, copy};
 use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
 
@@ -74,13 +74,17 @@ pub trait Stream<A> {
     type Iter: IntoIterator<Item=A>;
 
     fn stream(&self) -> Self::Iter;
-
+    fn copy(&self) -> Self;
 }
 
 impl <A: Clone> Stream<A> for Vec<A> {
     type Iter = Vec<A>;
 
     fn stream(&self) -> Self::Iter {
+        self.clone()
+    }
+
+    fn copy(&self) -> Self {
         self.clone()
     }
 }
@@ -94,11 +98,18 @@ pub struct DiskBuffer<A> {
     buffer: Vec<A>
 }
 
-#[derive(Clone)]
+//#[derive(Clone)]
 pub struct FileStore<A: Clone + Send + Sync> {
     root_path: String, 
     name: Option<String>,
     pd: PhantomData<A>
+}
+
+impl <A: Clone + Send + Sync> Clone for FileStore<A> {
+    fn clone(&self) -> Self {
+        println!("Cloning fileStore!");
+        panic!()
+    }
 }
 
 impl <A: Clone + Send + Sync> FileStore<A> {
@@ -107,6 +118,16 @@ impl <A: Clone + Send + Sync> FileStore<A> {
             root_path: path,
             name: None,
             pd: PhantomData
+        }
+    }
+}
+
+impl <A: Clone + Send + Sync> Drop for FileStore<A> {
+    fn drop(&mut self) {
+        if let Some(ref name) = self.name {
+            if let Err(e) = remove_file(name) {
+                //eprintln!("Double delete: {}", name);
+            }
         }
     }
 }
@@ -158,6 +179,20 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStor
             v
         } else {
             Vec::with_capacity(0)
+        }
+    }
+
+    fn copy(&self) -> Self {
+        if let Some(ref name) = self.name {
+            let new_name = format!("{}/tange-{}", &self.root_path, Uuid::new_v4());
+            copy(name, &new_name).expect("Failed to copy file!");
+            FileStore {
+                root_path: self.root_path.clone(),
+                name: Some(new_name),
+                pd: PhantomData
+            }
+        } else {
+            FileStore::empty(self.root_path.clone())
         }
     }
 }

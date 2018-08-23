@@ -26,8 +26,7 @@ pub struct DiskCollection<A: Clone + Send + Sync>  {
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<A> {
 
     pub fn from_vec(path: String, vec: Vec<A>) -> DiskCollection<A> {
-        let fs = FileStore::empty(path.clone()).write_vec(vec);
-        DiskCollection { path: path, partitions: vec![Deferred::lift(fs, None)] }
+        MemoryCollection::from_vec(vec).to_disk(path)
     }
 
     pub fn from_memory(path: String, mc: &Vec<Deferred<Vec<A>>>) -> DiskCollection<A> {
@@ -255,7 +254,7 @@ impl DiskCollection<String> {
 #[cfg(test)]
 mod test_lib {
     use super::*;
-    use tange::scheduler::LeveledScheduler;
+    use tange::scheduler::{GreedyScheduler,LeveledScheduler};
 
     fn make_col() -> DiskCollection<usize> {
         DiskCollection::from_vec("/tmp".into(), vec![1,2,3,1,2usize])
@@ -296,10 +295,11 @@ mod test_lib {
         let computed = col.partition(2, |_idx, x| x % 2)
             .sort_by(|x| *x);
         assert_eq!(computed.partitions.len(), 2);
-        let results = computed.run(&mut LeveledScheduler).unwrap();
+        let results = computed.run(&mut GreedyScheduler::new(8)).unwrap();
         assert_eq!(results, vec![2, 2, 1, 1, 3]);
     }
 
+    /*
     #[test]
     fn test_count() {
         let col = make_col();
@@ -307,11 +307,10 @@ mod test_lib {
         assert_eq!(results, vec![5]);
     }
 
-    /*
     #[test]
     fn test_join() {
         let col1 = make_col();
-        let col2 = DiskCollection::from_vec(
+        let col2 = DiskCollection::from_vec("/tmp".into(),
             vec![(2, 1.23f64), (3usize, 2.34)]);
         let out = col1.join_on(&col2, 5, |x| *x, |y| y.0, |x, y| {
             (*x, y.1)

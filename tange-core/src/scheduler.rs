@@ -440,7 +440,7 @@ impl Scheduler for GreedyScheduler{
                 }
 
                 jobs_done += 1;
-                if jobs_done % (total_jobs as f64 / 10.) as usize == 0 {
+                if total_jobs > 10 && jobs_done % (total_jobs as f64 / 10.) as usize == 0 {
                     debug!("Finished {}/{} of jobs", jobs_done, total_jobs);
                     if log_enabled!(Trace) {
                         let ds = dsam.lock().unwrap();
