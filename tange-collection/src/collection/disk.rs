@@ -299,7 +299,6 @@ mod test_lib {
         assert_eq!(results, vec![2, 2, 1, 1, 3]);
     }
 
-    /*
     #[test]
     fn test_count() {
         let col = make_col();
@@ -320,6 +319,7 @@ mod test_lib {
         assert_eq!(results, expected);
     }
 
+    /*
     #[test]
     fn test_emit() {
         let results = DiskCollection::from_vec(vec![1,2,3usize])

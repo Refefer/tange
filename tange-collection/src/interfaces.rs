@@ -98,18 +98,11 @@ pub struct DiskBuffer<A> {
     buffer: Vec<A>
 }
 
-//#[derive(Clone)]
+#[derive(Clone)]
 pub struct FileStore<A: Clone + Send + Sync> {
     root_path: String, 
     name: Option<String>,
     pd: PhantomData<A>
-}
-
-impl <A: Clone + Send + Sync> Clone for FileStore<A> {
-    fn clone(&self) -> Self {
-        println!("Cloning fileStore!");
-        panic!()
-    }
 }
 
 impl <A: Clone + Send + Sync> FileStore<A> {
@@ -126,7 +119,7 @@ impl <A: Clone + Send + Sync> Drop for FileStore<A> {
     fn drop(&mut self) {
         if let Some(ref name) = self.name {
             if let Err(e) = remove_file(name) {
-                //eprintln!("Double delete: {}", name);
+                eprintln!("Error Deleting {}: {:?}J", name, e);
             }
         }
     }
