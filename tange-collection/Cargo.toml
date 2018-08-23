@@ -5,6 +5,10 @@ authors = ["Andrew Stanton <astanton@etsy.com>"]
 
 [dependencies]
 tange = { path = "../tange-core" }
+bincode = "1.0"
+serde = "1.0"
+serde_derive = "1.0"
+uuid = { version = "0.6", features = ["v4"] }
 
 [lib]
 name = "tange_collection"

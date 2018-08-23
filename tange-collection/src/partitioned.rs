@@ -9,10 +9,10 @@ use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use interfaces::*;
 
 pub fn block_reduce<
-    Col: Any + Sync + Send + Clone,
-    K: Any + Sync + Send + Clone + Hash + Eq,
     A,
     B,
+    Col: Any + Sync + Send + Clone + Stream<A>,
+    K: Any + Sync + Send + Clone + Hash + Eq,
     C: Any + Sync + Send + Clone,
     D: 'static + Sync + Send + Clone + Fn() -> B, 
     F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
@@ -24,21 +24,20 @@ pub fn block_reduce<
     default: D, 
     binop: O,
     map: M
-) -> Vec<Deferred<C>> 
-        where for<'a> &'a Col: IntoIterator<Item=&'a A> {
+) -> Vec<Deferred<C>> {
     batch_apply(defs, move |_idx, vs| {
         let mut reducer = HashMap::new();
-        for v in vs.into_iter() {
-            let k = key(v);
+        for v in vs.stream().into_iter() {
+            let k = key(&v);
             let e = reducer.entry(k).or_insert_with(&default);
-            *e = binop(e, v);
+            *e = binop(e, &v);
         }
         map(reducer)
     })
 }
 
 pub fn split_by_key<
-    Col: Any + Sync + Send + Clone + Accumulator<A>,
+    Col: Any + Sync + Send + Clone + Accumulator<A> + Stream<A>,
     A: Clone,
     F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
 >(
@@ -46,14 +45,13 @@ pub fn split_by_key<
     partitions: usize, 
     hash_function: F
 ) -> Vec<Vec<Deferred<Col>>> 
-        where for<'a> &'a Col: IntoIterator<Item=&'a A>,
-              Col::VW: ValueWriter<A,Out=Col> {
+        where Col::VW: ValueWriter<A,Out=Col> {
 
     // Group into buckets 
     let stage1 = batch_apply(&defs, move |_idx, vs| {
         let mut parts: Vec<_> = (0..partitions).map(|_| vs.writer()).collect();
-        for (idx, x) in vs.into_iter().enumerate() {
-            let p = hash_function(idx, x) % partitions;
+        for (idx, x) in vs.stream().into_iter().enumerate() {
+            let p = hash_function(idx, &x) % partitions;
             parts[p].add(x.clone());
         }
         parts.into_iter().map(|x| x.finish()).collect::<Vec<_>>()
@@ -74,7 +72,7 @@ pub fn split_by_key<
 }
 
 pub fn partition<
-    Col: Any + Sync + Send + Clone + Accumulator<A>,
+    Col: Any + Sync + Send + Clone + Accumulator<A> + Stream<A>,
     A: Any + Send + Sync + Clone,
     F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
 >(
@@ -82,8 +80,7 @@ pub fn partition<
     partitions: usize, 
     key: F
 ) -> Vec<Deferred<Col>>
-        where for<'a> &'a Col: IntoIterator<Item=&'a A>, 
-              Col::VW: ValueWriter<A,Out=Col> {
+        where Col::VW: ValueWriter<A,Out=Col> {
     
     let groups = split_by_key(defs, partitions, key);
     
@@ -119,15 +116,15 @@ fn merge_maps<
 }
 
 pub fn fold_by<
-    C1: Any + Sync + Send + Clone + Accumulator<A>,
     A: Clone,
+    C1: Any + Sync + Send + Clone + Accumulator<A> + Stream<A>,
     B: Any + Sync + Send + Clone,
     K: Any + Sync + Send + Clone + Hash + Eq,
     D: 'static + Sync + Send + Clone + Fn() -> B, 
     F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
     O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
     R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B,
-    Acc: 'static + Accumulator<(K, B)>
+    Acc: 'static + Accumulator<(K, B)> + Stream<(K,B)>
 >(
     defs: &[Deferred<C1>],
     key: F, 
@@ -137,9 +134,7 @@ pub fn fold_by<
     acc: Acc,
     partitions: usize
 ) -> Vec<Deferred<<<Acc as Accumulator<(K, B)>>::VW as ValueWriter<(K, B)>>::Out>>
-        where for<'a> &'a C1: IntoIterator<Item=&'a A>,
-              for<'a> &'a Acc: IntoIterator<Item=&'a (K,B)>,
-              Acc::VW: ValueWriter<(K, B),Out=Acc> {
+        where Acc::VW: ValueWriter<(K, B),Out=Acc> {
 
     let acc2 = acc.clone();
     let stage1 = block_reduce(defs, key, default, binop, move |x| {
@@ -149,15 +144,14 @@ pub fn fold_by<
     });
 
     // Split into chunks
-    //let chunks = partition_by_key::<<Acc as Accumulator<(K, B)>>::VW as ValueWriter<(K, B)>>::Out>,_,_,_>(&stage1, partitions, |x| x.0.clone());
     let chunks = partition_by_key::<Acc,_,_,_>(&stage1, partitions, |x| x.0.clone());
 
     // partition reduce
     let concat: Vec<_> = chunks.into_iter().map(|chunk| {
         batch_apply(&chunk, |_idx, vs| {
             let mut hm = HashMap::new();
-            for (k, v) in vs {
-                hm.insert(k.clone(), v.clone());
+            for (k, v) in vs.stream() {
+                hm.insert(k, v);
             }
             hm
         })
@@ -182,7 +176,7 @@ pub fn fold_by<
 }
 
 pub fn partition_by_key<
-    C: Any + Sync + Send + Clone + Accumulator<A>,
+    C: Any + Sync + Send + Clone + Accumulator<A> + Stream<A>,
     A: Clone,
     K: Any + Sync + Send + Clone + Hash + Eq,
     F: 'static + Sync + Send + Clone + Fn(&A) -> K
@@ -191,8 +185,7 @@ pub fn partition_by_key<
     n_chunks: usize, 
     key: F
 ) -> Vec<Vec<Deferred<C>>>
-        where for<'a> &'a C: IntoIterator<Item=&'a A>, 
-              C::VW: ValueWriter<A,Out=C> {
+        where C::VW: ValueWriter<A,Out=C> {
     split_by_key(defs, n_chunks, move |_idx, v| {
         let k = key(v);
         let mut hasher = DefaultHasher::new();
@@ -202,21 +195,20 @@ pub fn partition_by_key<
 }
 
 pub fn concat<
-    Col: Any + Sync + Send + Clone + Accumulator<A>,
+    Col: Any + Sync + Send + Accumulator<A> + Stream<A>,
     A: Clone,
 >(
     defs: &[Deferred<Col>]
 ) -> Option<Deferred<Col>>
-        where for<'a> &'a Col: IntoIterator<Item=&'a A>, 
-              Col::VW: ValueWriter<A,Out=Col> {
+        where  Col::VW: ValueWriter<A,Out=Col> {
 
     tree_reduce(&defs, |x, y| {
         let mut out = x.writer();
-        for xi in x {
-            out.add(xi.clone());
+        for xi in x.stream() {
+            out.add(xi);
         }
-        for yi in y {
-            out.add(yi.clone());
+        for yi in y.stream() {
+            out.add(yi);
         }
         out.finish()
     })
@@ -225,10 +217,10 @@ pub fn concat<
 
 
 pub fn join_on_key<
-    Col1: Any + Sync + Send + Clone,
-    Col2: Any + Sync + Send + Clone,
     A, 
     B,
+    Col1: Any + Sync + Send + Clone + Stream<(K, A)>,
+    Col2: Any + Sync + Send + Clone + Stream<(K, B)>,
     K: Any + Send + Sync + Clone + Hash + Eq,
     C: Any + Sync + Send + Clone,
     J: 'static + Sync + Send + Clone + Fn(&A, &B) -> C,
@@ -238,22 +230,20 @@ pub fn join_on_key<
     d2: &Deferred<Col2>, 
     acc: Acc,
     joiner: J
-) -> Deferred<<<Acc as Accumulator<(K, C)>>::VW as ValueWriter<(K, C)>>::Out> 
-        where for<'a> &'a Col1: IntoIterator<Item=&'a (K, A)>,
-              for<'b> &'b Col2: IntoIterator<Item=&'b (K, B)> {
+) -> Deferred<<<Acc as Accumulator<(K, C)>>::VW as ValueWriter<(K, C)>>::Out> {
 
     d1.join(d2, move |left, right| {
         // Slurp up left into a hashmap
         let mut hm = HashMap::new();
-        for (k, lv) in left {
+        for (k, lv) in left.stream() {
             let e = hm.entry(k).or_insert_with(|| Vec::with_capacity(1)); 
             e.push(lv);
         }
         let mut ret = acc.writer();
-        for (k, rv) in right {
-            if let Some(lvs) = hm.get(k) {
+        for (k, rv) in right.stream() {
+            if let Some(lvs) = hm.get(&k) {
                 for lv in lvs.iter() {
-                    ret.add((k.clone(), joiner(lv, rv)))
+                    ret.add((k.clone(), joiner(&lv, &rv)))
                 }
             }
         }
