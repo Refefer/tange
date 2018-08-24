@@ -4,6 +4,7 @@ use std::any::Any;
 use std::io::prelude::*;
 use std::io::BufWriter;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use self::serde::Deserialize;
 use self::serde::Serialize;
@@ -19,7 +20,7 @@ use super::emit;
 
 #[derive(Clone)]
 pub struct DiskCollection<A: Clone + Send + Sync>  {
-    path: String,
+    path: Arc<String>,
     partitions: Vec<Deferred<FileStore<A>>>
 }
 
@@ -30,11 +31,12 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     }
 
     pub fn from_memory(path: String, mc: &Vec<Deferred<Vec<A>>>) -> DiskCollection<A> {
-        let acc = FileStore::empty(path.clone());
+        let shared = Arc::new(path);
+        let acc = FileStore::empty(shared.clone());
         let defs = batch_apply(&mc, move |_idx, vs| {
             acc.write_vec(vs.clone())
         });
-        DiskCollection { path: path, partitions: defs }
+        DiskCollection { path: shared, partitions: defs }
     }
 
     pub fn to_memory(&self) -> MemoryCollection<A> {

@@ -6,6 +6,7 @@ use std::any::Any;
 use std::fs::{File,remove_file, copy};
 use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use self::serde::{Serialize,Deserialize};
 use self::bincode::{serialize_into, deserialize_from};
@@ -91,29 +92,45 @@ impl <A: Clone> Stream<A> for Vec<A> {
 }
 
 #[derive(Clone)]
-pub struct Disk(pub String);
+pub struct Disk(pub Arc<String>);
 
-#[derive(Clone)]
 pub struct DiskBuffer<A> {
-    root_path: String, 
-    buffer: Vec<A>
+    root_path: Arc<String>, 
+    name: String,
+    pd: PhantomData<A>,
+    out: BufWriter<File>
+}
+
+impl <A> DiskBuffer<A> {
+    fn new(path: Arc<String>) -> Self {
+        let name = format!("{}/tange-{}", &path, Uuid::new_v4());
+        let fd = File::create(&name).expect("Can't create file!");
+        let bw = BufWriter::new(fd);
+        DiskBuffer { 
+            root_path: path, 
+            name: name, 
+            pd: PhantomData,
+            out: bw
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct FileStore<A: Clone + Send + Sync> {
-    root_path: String, 
+    root_path: Arc<String>, 
     name: Option<String>,
     pd: PhantomData<A>
 }
 
 impl <A: Clone + Send + Sync> FileStore<A> {
-    pub fn empty(path: String) -> Self {
+    pub fn empty(path: Arc<String>) -> Self {
         FileStore {
             root_path: path,
             name: None,
             pd: PhantomData
         }
     }
+
 }
 
 impl <A: Clone + Send + Sync> Drop for FileStore<A> {
@@ -130,7 +147,7 @@ impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for Disk {
     type VW = DiskBuffer<A>;
 
     fn writer(&self) -> Self::VW {
-        DiskBuffer { root_path: self.0.clone(), buffer: Vec::new() }
+        DiskBuffer::new(self.0.clone())
     }
 }
 
@@ -138,7 +155,7 @@ impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for FileStore<A> {
     type VW = DiskBuffer<A>;
 
     fn writer(&self) -> Self::VW {
-        DiskBuffer { root_path: self.root_path.clone(), buffer: Vec::new() }
+        DiskBuffer::new(self.root_path.clone())
     }
 }
 
@@ -146,34 +163,23 @@ impl <A: Serialize + Clone + Send + Sync> ValueWriter<A> for DiskBuffer<A> {
     type Out = FileStore<A>;
 
     fn add(&mut self, item: A) -> () {
-        self.buffer.push(item);
+        serialize_into(&mut self.out, &item).expect("Couldn't write record!");
     }
 
     fn finish(self) -> Self::Out {
-        let name = format!("{}/tange-{}", &self.root_path, Uuid::new_v4());
-        let fd = File::create(&name).expect("Can't create file!");
-        let mut bw = BufWriter::new(fd);
-        serialize_into(&mut bw, &self.buffer).expect("Couldn't write data!");
         FileStore { 
             root_path: self.root_path.clone(), 
-            name: Some(name), 
+            name: Some(self.name), 
             pd: PhantomData
         }
     }
 }
 
 impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStore<A> {
-    type Iter = Vec<A>;
+    type Iter = RecordFile<A>;
 
     fn stream(&self) -> Self::Iter {
-        if let Some(ref name) = self.name {
-            let fd = File::open(name).expect("File didn't exist on open!");
-            let mut br = BufReader::new(fd);
-            let v: Vec<A> = deserialize_from(&mut br).expect("Unable to deserialize item!");
-            v
-        } else {
-            Vec::with_capacity(0)
-        }
+        RecordFile(self.name.clone(), PhantomData)
     }
 
     fn copy(&self) -> Self {
@@ -187,6 +193,37 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStor
             }
         } else {
             FileStore::empty(self.root_path.clone())
+        }
+    }
+}
+
+pub struct RecordFile<A>(Option<String>, PhantomData<A>);
+
+impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> IntoIterator for RecordFile<A> {
+    type Item = A;
+    type IntoIter = RecordStreamer<A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        if let Some(ref n) = self.0 {
+            let fd = File::open(n).expect("File didn't exist on open!");
+            let br = BufReader::new(fd);
+            RecordStreamer(Some(br), PhantomData)
+        } else {
+            RecordStreamer(None, PhantomData)
+        }
+    }
+}
+
+pub struct RecordStreamer<A>(Option<BufReader<File>>, PhantomData<A>);
+
+impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Iterator for RecordStreamer<A> {
+    type Item = A;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(ref mut bw) = self.0 {
+            deserialize_from(bw).ok()
+        } else {
+            None
         }
     }
 }
