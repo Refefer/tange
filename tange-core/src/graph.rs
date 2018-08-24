@@ -33,14 +33,14 @@ pub enum Task {
 }
 
 /// Holds references to the number of arguments to pass into a Task
-#[derive(Debug,Clone)]
+#[derive(Clone)]
 pub enum FnArgs {
 
     /// Single argument
-    Single(Arc<Handle>),
+    Single(Arc<Graph>),
 
     /// Used for joining two separate task outputs
-    Join(Arc<Handle>, Arc<Handle>)
+    Join(Arc<Graph>, Arc<Graph>)
 }
 
 /// Graphs contain the computational pieces needed to represent the data flow
@@ -48,63 +48,41 @@ pub enum FnArgs {
 #[derive(Clone)]
 pub struct Graph {
 
-    /// Output handle to task
-    pub tasks: HashMap<Arc<Handle>, Arc<Task>>,
+    pub handle: Arc<Handle>,
 
-    /// Dependencies between tasks
-    pub dependencies: HashMap<Arc<Handle>, Option<Arc<FnArgs>>>
+    pub task: Arc<Task>,
+
+    pub args: Option<FnArgs>
+
 }
 
 impl Graph {
 
-    /// Creates a new Graph
-    pub fn new() -> Self {
-        Graph { 
-            tasks: HashMap::new(), 
-            dependencies: HashMap::new() 
-        }
-    }
-
     /// Adds a new input into the Graph
-    pub fn add_input<I: Input + 'static>(&mut self, input: I, name: &str) -> Arc<Handle> {
-        let i_name = format!("Input<id={},name={}>", self.tasks.len(), name);
+    pub fn create_input<I: Input + 'static>(input: I, name: &str) -> Arc<Graph> {
+        let i_name = format!("Input<name={}>", name);
         let handle = Arc::new(Handle::new(i_name));
         let inp = Arc::new(Task::Input(Box::new(input)));
-        self.dependencies.insert(handle.clone(), None);
-        self.tasks.insert(handle.clone(), inp);
-        handle
+        Arc::new(Graph {
+            handle: handle,
+            task: inp,
+            args: None
+        })
     }
 
     /// Adds a task to the dataset with the given inputs.  No effort is made to ensure the
     /// handles exist within the graph.
-    pub fn add_task<D: 'static + DynRun>(&mut self, inputs: FnArgs, t: D, name: &str) -> Arc<Handle> {
+    pub fn create_task<D: 'static + DynRun>(inputs: FnArgs, t: D, name: &str) -> Arc<Graph> {
         // Get new handle
-        let h_name = format!("Task<id={},name={}>", self.tasks.len(), name);
+        let h_name = format!("Task<name={}>", name);
         let handle = Arc::new(Handle::new(h_name));
-        let task = Task::Function(Box::new(t));
-        self.dependencies.insert(handle.clone(), Some(Arc::new(inputs.clone())));
-        self.tasks.insert(handle.clone(), Arc::new(task));
-        handle
+        let task = Arc::new(Task::Function(Box::new(t)));
+        Arc::new(Graph {
+            handle: handle,
+            task: task,
+            args: Some(inputs)
+        })
     }
 
-    /// Given two graphs, merge all tasks and dependencies.
-    pub fn merge(&self, other: &Graph) -> Graph {
-        let mut nh = self.clone();
-
-        // Add missing inputs
-        for (handle, input) in other.dependencies.iter() {
-            if !self.dependencies.contains_key(handle) {
-                nh.dependencies.insert(handle.clone(), input.clone());
-            }
-        }
-
-        // Add missing stages
-        for (handle, task) in other.tasks.iter() {
-            if !self.tasks.contains_key(handle) {
-                nh.tasks.insert(handle.clone(), task.clone());
-            }
-        }
-        nh
-    }
 }
 

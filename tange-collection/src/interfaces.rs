@@ -65,7 +65,8 @@ impl <A: Any + Send + Sync + Clone> ValueWriter<A> for Vec<A> {
         self.push(item);
     }
 
-    fn finish(self) -> Self::Out {
+    fn finish(mut self) -> Self::Out {
+        self.shrink_to_fit();
         self
     }
 }

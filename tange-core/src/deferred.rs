@@ -17,34 +17,29 @@ impl <A: Any + Send + Sync + Clone> Input for Lift<A> {
 #[derive(Clone)]
 pub struct Deferred<A> {
     graph: Arc<Graph>,
-    items: PhantomData<A>,
-    handle: Arc<Handle>
+    items: PhantomData<A>
 }
 
 impl <A: Any + Send + Sync> Deferred<A> {
     
     pub fn apply<B: Any + Send + Sync, F: Send + Sync + 'static + Fn(&A) -> B>(&self, f: F) -> Deferred<B> {
-        let mut ng: Graph = Graph::clone(&self.graph);
-        let handle = ng.add_task(
-            FnArgs::Single(self.handle.clone()), DynFn::new(f), "Apply");
+        let ng = Graph::create_task(
+            FnArgs::Single(self.graph.clone()), DynFn::new(f), "Apply");
         Deferred {
-            graph: Arc::new(ng),
-            items: PhantomData,
-            handle: handle 
+            graph: ng,
+            items: PhantomData
         }
 
     }
 
     pub fn join<B: Any + Send + Sync, C: Any + Send + Sync, F: Send + Sync + 'static + Fn(&A, &B) -> C>(&self, other: &Deferred<B>, f: F) -> Deferred<C> {
-        let mut ng = self.graph.merge(&other.graph);
-        let handle = ng.add_task(
-            FnArgs::Join(self.handle.clone(), other.handle.clone()), 
+        let ng = Graph::create_task(
+            FnArgs::Join(self.graph.clone(), other.graph.clone()), 
             DynFn2::new(f), "Join");
 
         Deferred {
-            graph: Arc::new(ng),
-            items: PhantomData,
-            handle: handle 
+            graph: ng,
+            items: PhantomData
         }
 
     }
@@ -52,18 +47,16 @@ impl <A: Any + Send + Sync> Deferred<A> {
 
 impl <A: Any + Send + Sync + Clone> Deferred<A> {
     pub fn lift(a: A, name: Option<&str>) -> Self {
-        let mut graph = Graph::new();
-        let handle = graph.add_input(Lift(a), name.unwrap_or("Input"));
+        let graph = Graph::create_input(Lift(a), name.unwrap_or("Input"));
         Deferred {
-            graph: Arc::new(graph),
-            items: PhantomData,
-            handle: handle
+            graph: graph,
+            items: PhantomData
         }
     }
 
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<A> {
-        s.compute(self.graph.clone(), &[self.handle.clone()]).and_then(|mut vs| { 
-            Arc::try_unwrap(vs.remove(0)).ok().and_then(|ab| {
+        s.compute(self.graph.clone()).and_then(|mut v| { 
+            Arc::try_unwrap(v).ok().and_then(|ab| {
                 ab.downcast_ref::<A>().map(|x| x.clone())
             })
         })

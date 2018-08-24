@@ -52,7 +52,7 @@ impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
 
 
 pub trait Scheduler {
-    fn compute(&mut self, graph: Arc<Graph>, outputs: &[Arc<Handle>]) -> Option<Vec<Arc<BASS>>>; 
+    fn compute(&mut self, graph: Arc<Graph>) -> Option<Arc<BASS>>; 
 }
 
 enum Limbo {
@@ -60,16 +60,54 @@ enum Limbo {
     Two(Arc<BASS>, Arc<BASS>)
 }
 
+struct DAG {
+   
+    /// Output handle to task
+    pub tasks: HashMap<Arc<Handle>, Arc<Task>>,
+
+    /// Dependencies between tasks
+    pub dependencies: HashMap<Arc<Handle>, Option<FnArgs>>
+ 
+}
+
+impl DAG {
+    fn new(g: Arc<Graph>) -> Self {
+        let mut tasks = HashMap::new();
+        let mut dependencies = HashMap::new();
+
+        let mut stack = vec![g];
+
+        while !stack.is_empty() {
+            let ag = stack.pop().unwrap();
+            tasks.insert(ag.handle.clone(), ag.task.clone());
+            dependencies.insert(ag.handle.clone(), ag.args.clone());
+            if let Some(ref fns) = ag.args {
+                match fns {
+                    FnArgs::Single(g) => stack.push(g.clone()),
+                    FnArgs::Join(g1, g2) => {
+                        stack.push(g1.clone());
+                        stack.push(g2.clone());
+                    }
+                };
+            }
+        }
+        DAG {
+            tasks: tasks,
+            dependencies: dependencies
+        }
+    }
+}
+
 fn get_fnargs(ds: &mut DataStore<Arc<Handle>,Arc<BASS>>, fa: &FnArgs) -> Option<Limbo> {
     match fa {
-        &FnArgs::Single(ref h) => {
-            ds.get(h).map(|args| {
+        &FnArgs::Single(ref g) => {
+            ds.get(&g.handle).map(|args| {
                 Limbo::One(args)
             })
         },
-        &FnArgs::Join(ref l, ref r) => {
-            ds.get(l).and_then(|left| {
-                ds.get(r).map(|right| {
+        &FnArgs::Join(ref lg, ref rg) => {
+            ds.get(&lg.handle).and_then(|left| {
+                ds.get(&rg.handle).map(|right| {
                     Limbo::Two(left, right)
                 })
             })
@@ -78,7 +116,7 @@ fn get_fnargs(ds: &mut DataStore<Arc<Handle>,Arc<BASS>>, fa: &FnArgs) -> Option<
 }
 
 // Converts a flattened graph into a dependency list
-fn build_dep_graph(graph: &Graph) -> (DepGraph, DepGraph) {
+fn build_dep_graph(graph: &DAG) -> (DepGraph, DepGraph) {
     // Build out dependencies
     let mut inbound: DepGraph = HashMap::new();
     let mut outbound: DepGraph = HashMap::new();
@@ -87,10 +125,10 @@ fn build_dep_graph(graph: &Graph) -> (DepGraph, DepGraph) {
         if let Some(inp) = inputs {
             let fna: &FnArgs = &inp;
             match fna {
-                &FnArgs::Single(ref h) => hs.insert(h.clone()),
+                &FnArgs::Single(ref h) => hs.insert(h.handle.clone()),
                 &FnArgs::Join(ref h1, ref h2) => {
-                    hs.insert(h1.clone());
-                    hs.insert(h2.clone())
+                    hs.insert(h1.handle.clone());
+                    hs.insert(h2.handle.clone())
                 },
             };
         }
@@ -165,7 +203,7 @@ fn generate_levels(collapsed: ChainGraph) -> Vec<Vec<Vec<Arc<Handle>>>> {
 }
 
 fn run_task(
-    graph: &Graph, 
+    graph: &DAG, 
     chain: &[Arc<Handle>], 
     dsam: Arc<Mutex<DataStore<Arc<Handle>, Arc<BASS>>>> 
 ) {
@@ -289,13 +327,14 @@ impl Scheduler for LeveledScheduler{
 
     fn compute(
         &mut self, 
-        graph: Arc<Graph>, 
-        outputs: &[Arc<Handle>]
-    ) -> Option<Vec<Arc<BASS>>> {
+        graph: Arc<Graph>
+    ) -> Option<Arc<BASS>> {
         
-        debug!("Number of Tasks Specified: {}", graph.tasks.len());
+        let out_handle = graph.handle.clone();
+        let dag = DAG::new(graph);
+        debug!("Number of Tasks Specified: {}", dag.tasks.len());
 
-        let (inbound, _outbound) = build_dep_graph(&graph);
+        let (inbound, _outbound) = build_dep_graph(&dag);
 
         let collapsed = collapse_graph(inbound);
 
@@ -323,14 +362,15 @@ impl Scheduler for LeveledScheduler{
         for (i, level) in levels.into_iter().enumerate() {
             debug!("Running level: {}", i);
             // Run graph
-            level.par_iter().for_each(|chain| { run_task(&graph, chain, dsam.clone())})
+            level.par_iter().for_each(|chain| { run_task(&dag, chain, dsam.clone())})
                 
         }
 
         debug!("Finished");
-        outputs.iter()
-            .map(|h| dsam.lock().unwrap().get(&h))
-            .collect()
+        let ret = {
+            dsam.lock().unwrap().get(&out_handle)
+        };
+        ret
     }
 }
 
@@ -340,17 +380,19 @@ impl GreedyScheduler {
     pub fn new(n_threads: usize) -> Self { GreedyScheduler(n_threads) }
 }
 
-impl Scheduler for GreedyScheduler{
+impl Scheduler for GreedyScheduler {
 
     fn compute(
         &mut self, 
-        graph: Arc<Graph>, 
-        outputs: &[Arc<Handle>]
-    ) -> Option<Vec<Arc<BASS>>> {
+        graph: Arc<Graph>
+    ) -> Option<Arc<BASS>> {
         
-        debug!("Number of Tasks Specified: {}", graph.tasks.len());
+        let out_handle = graph.handle.clone();
+        let dag = Arc::new(DAG::new(graph));
+        
+        debug!("Number of Tasks Specified: {}", dag.tasks.len());
 
-        let (inbound, mut outbound) = build_dep_graph(&graph);
+        let (inbound, mut outbound) = build_dep_graph(&dag);
 
         let collapsed = collapse_graph(inbound);
 
@@ -387,8 +429,6 @@ impl Scheduler for GreedyScheduler{
 
         // Start the loop!
 
-        trace!("Output: {:?}", outputs);
-
         if log_enabled!(Trace) {
             for (ref index, &(ref chain, ref _priority, ref deps)) in head_map.iter() {
                 trace!("Index: {:?}, Chain: {:?}, Deps: {:?}", index, chain, deps);
@@ -405,7 +445,7 @@ impl Scheduler for GreedyScheduler{
                 while free_threads > 0 && !queue.is_empty(){
                     if let Some((chain, priority)) = queue.pop() {
                         trace!("Training chain: {:?}, Priority: {}", chain, priority);
-                        let g = graph.clone();
+                        let g = dag.clone();
                         let c = chain.clone();
                         let d = dsam.clone();
                         let thread_tx = tx.clone();
@@ -465,9 +505,10 @@ impl Scheduler for GreedyScheduler{
         }
 
         debug!("Finished");
-        outputs.iter()
-            .map(|h| dsam.lock().unwrap().get(&h))
-            .collect()
+        let ret = {
+            dsam.lock().unwrap().get(&out_handle)
+        };
+        ret
     }
 }
 

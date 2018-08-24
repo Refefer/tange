@@ -53,11 +53,13 @@ fn read(_idx: usize, chunk: &Chunk) -> Vec<String> {
             Ok(0) => break,
             Ok(size) => {
                 start += size as u64;
+                s.shrink_to_fit();
                 lines.push(s);
             },
             _ => break
         };
         if start > total { break; }
     }
+    lines.shrink_to_fit();
     lines
 }
