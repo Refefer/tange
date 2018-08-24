@@ -94,32 +94,6 @@ pub fn partition<
     new_chunks
 }
 
-fn merge_maps<
-    K: Hash + Eq + Clone, 
-    V: Clone,
-    Col: Stream<(K, V)>,
-    R: 'static + Sync + Send + Clone + Fn(&V, &V) -> V
->(
-    left: &Col, 
-    right: &Col,
-    reduce: Arc<R>
-) -> HashMap<K, V> {
-    let mut nl = HashMap::new();
-    for (k, v) in left.stream() {
-        nl.insert(k, v);
-    }
-    for (k, v) in right.stream() {
-        if !nl.contains_key(&k) {
-            nl.insert(k, v);
-        } else {
-            nl.entry(k)
-                .and_modify(|e| *e = reduce(e, &v))
-                .or_insert_with(|| v); 
-        }
-    }
-    nl
-}
-
 pub fn fold_by<
     A: Clone,
     C1: Any + Sync + Send + Clone + Accumulator<A> + Stream<A>,
@@ -196,15 +170,7 @@ pub fn fold_by<
         });
         reduction.push(out.unwrap());
     }
-
-    let am2 = acc2.clone();
-    batch_apply(&reduction, move |_idx, vs| {
-        let mut out = am2.writer();
-        for (k, v) in vs.stream() {
-            out.add((k, v));
-        }
-        out.finish()
-    })
+    reduction
 }
 
 pub fn partition_by_key<
