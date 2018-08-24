@@ -1,7 +1,6 @@
 extern crate tange;
 
 pub mod utils;
-//mod partition;
 mod partitioned;
 mod interfaces;
 mod collection;

@@ -4,6 +4,7 @@ use std::any::Any;
 use std::hash::{Hasher,Hash};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use interfaces::*;
@@ -96,20 +97,24 @@ pub fn partition<
 fn merge_maps<
     K: Hash + Eq + Clone, 
     V: Clone,
+    Col: Stream<(K, V)>,
     R: 'static + Sync + Send + Clone + Fn(&V, &V) -> V
 >(
-    left: &HashMap<K, V>, 
-    right: &HashMap<K,V>,
-    reduce: R
+    left: &Col, 
+    right: &Col,
+    reduce: Arc<R>
 ) -> HashMap<K, V> {
-    let mut nl: HashMap<_,_> = left.clone();
-    for (k, v) in right.iter() {
-        if !nl.contains_key(k) {
-            nl.insert(k.clone(), v.clone());
+    let mut nl = HashMap::new();
+    for (k, v) in left.stream() {
+        nl.insert(k, v);
+    }
+    for (k, v) in right.stream() {
+        if !nl.contains_key(&k) {
+            nl.insert(k, v);
         } else {
-            nl.entry(k.clone())
-                .and_modify(|e| *e = reduce(e, v))
-                .or_insert_with(|| v.clone()); 
+            nl.entry(k)
+                .and_modify(|e| *e = reduce(e, &v))
+                .or_insert_with(|| v); 
         }
     }
     nl
@@ -136,9 +141,10 @@ pub fn fold_by<
 ) -> Vec<Deferred<<<Acc as Accumulator<(K, B)>>::VW as ValueWriter<(K, B)>>::Out>>
         where Acc::VW: ValueWriter<(K, B),Out=Acc> {
 
-    let acc2 = acc.clone();
+    let acc2 = Arc::new(acc);
+    let am = acc2.clone();
     let stage1 = block_reduce(defs, key, default, binop, move |x| {
-        let mut out = acc2.writer();
+        let mut out = am.writer();
         out.extend(&mut x.into_iter());
         out.finish()
     });
@@ -147,29 +153,55 @@ pub fn fold_by<
     let chunks = partition_by_key::<Acc,_,_,_>(&stage1, partitions, |x| x.0.clone());
 
     // partition reduce
-    let concat: Vec<_> = chunks.into_iter().map(|chunk| {
-        batch_apply(&chunk, |_idx, vs| {
+    let am = acc2.clone();
+    let concat: Vec<_> = chunks.into_iter().map(move |chunk| {
+        let am = am.clone();
+        batch_apply(&chunk, move |_idx, vs| {
             let mut hm = HashMap::new();
             for (k, v) in vs.stream() {
                 hm.insert(k, v);
             }
-            hm
+            let mut out = am.writer();
+            out.extend(&mut hm.into_iter());
+            out.finish()
         })
     }).collect();
 
     let mut reduction = Vec::new();
-    let nf = move |l: &HashMap<K,B>, r: &HashMap<K,B>| {
-        merge_maps(l, r, reduce.clone())
-    };
+    let rm = Arc::new(reduce);
     for group in concat {
-        let out = tree_reduce(&group, nf.clone());
+        let amc = acc2.clone();
+        let ri = rm.clone();
+
+        let out = tree_reduce(&group, move |left, right| {
+            let mut nl = HashMap::new();
+            for (k, v) in left.stream() {
+                nl.insert(k, v);
+            }
+            for (k, v) in right.stream() {
+                if !nl.contains_key(&k) {
+                    nl.insert(k, v);
+                } else {
+                    nl.entry(k)
+                        .and_modify(|e| *e = ri(e, &v))
+                        .or_insert_with(|| v); 
+                }
+            }
+            let mut out = amc.writer();
+
+            for item in nl.into_iter() {
+                out.add(item);
+            }
+            out.finish()
+        });
         reduction.push(out.unwrap());
     }
 
+    let am2 = acc2.clone();
     batch_apply(&reduction, move |_idx, vs| {
-        let mut out = acc.writer();
-        for (k, v) in vs {
-            out.add((k.clone(), v.clone()));
+        let mut out = am2.writer();
+        for (k, v) in vs.stream() {
+            out.add((k, v));
         }
         out.finish()
     })
