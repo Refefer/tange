@@ -139,6 +139,8 @@ fn build_dep_graph(graph: &DAG) -> (DepGraph, DepGraph) {
         }
         inbound.insert(output.clone(), hs);
     }
+    inbound.shrink_to_fit();
+    outbound.shrink_to_fit();
     (inbound, outbound)
 }
 

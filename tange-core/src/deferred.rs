@@ -55,7 +55,7 @@ impl <A: Any + Send + Sync + Clone> Deferred<A> {
     }
 
     pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<A> {
-        s.compute(self.graph.clone()).and_then(|mut v| { 
+        s.compute(self.graph.clone()).and_then(|v| { 
             Arc::try_unwrap(v).ok().and_then(|ab| {
                 ab.downcast_ref::<A>().map(|x| x.clone())
             })
