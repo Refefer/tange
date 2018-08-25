@@ -17,7 +17,7 @@ pub fn block_reduce<
     C: Any + Sync + Send + Clone,
     D: 'static + Sync + Send + Clone + Fn() -> B, 
     F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-    O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
+    O: 'static + Sync + Send + Clone + Fn(&mut B, &A) -> (),
     M: 'static + Sync + Send + Clone + Fn(HashMap<K,B>) -> C,
 >(
     defs: &[Deferred<Col>], 
@@ -31,7 +31,7 @@ pub fn block_reduce<
         for v in vs.stream().into_iter() {
             let k = key(&v);
             let e = reducer.entry(k).or_insert_with(&default);
-            *e = binop(e, &v);
+            binop(e, &v);
         }
         map(reducer)
     })
@@ -101,8 +101,8 @@ pub fn fold_by<
     K: Any + Sync + Send + Clone + Hash + Eq,
     D: 'static + Sync + Send + Clone + Fn() -> B, 
     F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-    O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
-    R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B,
+    O: 'static + Sync + Send + Clone + Fn(&mut B, &A) -> (),
+    R: 'static + Sync + Send + Clone + Fn(&mut B, &B) -> (),
     Acc: 'static + Accumulator<(K, B)> + Stream<(K,B)>
 >(
     defs: &[Deferred<C1>],
@@ -157,7 +157,7 @@ pub fn fold_by<
                     nl.insert(k, v);
                 } else {
                     nl.entry(k)
-                        .and_modify(|e| *e = ri(e, &v))
+                        .and_modify(|e| ri(e, &v))
                         .or_insert_with(|| v); 
                 }
             }
@@ -211,8 +211,6 @@ pub fn concat<
         out.finish()
     })
 }
-
-
 
 pub fn join_on_key<
     A, 

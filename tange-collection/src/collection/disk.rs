@@ -112,8 +112,8 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
                    B: Any + Sync + Send + Clone + Serialize + for<'de> Deserialize<'de>,
                    D: 'static + Sync + Send + Clone + Fn() -> B,
                    F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-                   O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
-                   R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
+                   O: 'static + Sync + Send + Clone + Fn(&mut B, &A) -> (),
+                   R: 'static + Sync + Send + Clone + Fn(&mut B, &B) -> ()>(
         &self, key: F, default: D, binop: O, reduce: R, partitions: usize
     ) -> DiskCollection<(K,B)> {
         let results = fold_by(&self.partitions, key, default, binop, 
@@ -166,7 +166,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         let p1 = self.map(move |x| (key1(x), x.clone()))
             .partition_by_key(partitions, |x| x.0.clone());
         let p2 = other.map(move |x| (key2(x), x.clone()))
-           .partition_by_key(partitions, |x| x.0.clone());
+            .partition_by_key(partitions, |x| x.0.clone());
 
         let mut new_parts = Vec::with_capacity(p1.partitions.len());
         for (l, r) in p1.partitions.iter().zip(p2.partitions.iter()) {
@@ -221,8 +221,8 @@ impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq + Serialize + for<'de
         //self.partition(chunks, |x| x);
         self.fold_by(|s| s.clone(), 
                      || 0usize, 
-                     |acc, _l| *acc + 1, 
-                     |x, y| *x + *y, 
+                     |acc, _l| *acc += 1, 
+                     |x, y| *x += *y, 
                      partitions)
     }
 }
@@ -265,7 +265,7 @@ mod test_lib {
     #[test]
     fn test_fold_by() {
         let col = make_col();
-        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 1);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 1);
         let mut results = out.run(&mut LeveledScheduler).unwrap();
         results.sort();
         assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
@@ -274,7 +274,7 @@ mod test_lib {
     #[test]
     fn test_fold_by_parts() {
         let col = make_col();
-        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 2);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 2);
         assert_eq!(out.partitions.len(), 2);
         let mut results = out.run(&mut LeveledScheduler).unwrap();
         results.sort();

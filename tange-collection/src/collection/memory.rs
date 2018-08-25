@@ -95,8 +95,8 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
                    B: Any + Sync + Send + Clone,
                    D: 'static + Sync + Send + Clone + Fn() -> B, 
                    F: 'static + Sync + Send + Clone + Fn(&A) -> K, 
-                   O: 'static + Sync + Send + Clone + Fn(&B, &A) -> B,
-                   R: 'static + Sync + Send + Clone + Fn(&B, &B) -> B>(
+                   O: 'static + Sync + Send + Clone + Fn(&mut B, &A) -> (),
+                   R: 'static + Sync + Send + Clone + Fn(&mut B, &B) -> ()>(
         &self, key: F, default: D, binop: O, reduce: R, partitions: usize
     ) -> MemoryCollection<(K,B)> {
         let results = fold_by(&self.partitions, key, default, binop, 
@@ -190,8 +190,8 @@ impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> MemoryCollection<A> 
         //self.partition(chunks, |x| x);
         self.fold_by(|s| s.clone(), 
                      || 0usize, 
-                     |acc, _l| *acc + 1, 
-                     |x, y| *x + *y, 
+                     |acc, _l| *acc += 1, 
+                     |x, y| *x += *y, 
                      partitions)
     }
 }
@@ -235,7 +235,7 @@ mod test_lib {
     #[test]
     fn test_fold_by() {
         let col = MemoryCollection::from_vec(vec![1,2,3,1,2usize]);
-        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 1);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 1);
         let mut results = out.run(&mut LeveledScheduler).unwrap();
         results.sort();
         assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
@@ -244,7 +244,7 @@ mod test_lib {
     #[test]
     fn test_fold_by_parts() {
         let col = MemoryCollection::from_vec(vec![1,2,3,1,2usize]);
-        let out = col.fold_by(|x| *x, || 0, |x, _y| x + 1, |x, y| x + y, 2);
+        let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 2);
         assert_eq!(out.partitions.len(), 2);
         let mut results = out.run(&mut LeveledScheduler).unwrap();
         results.sort();
