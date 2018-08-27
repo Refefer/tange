@@ -8,6 +8,7 @@ rayon = "1.0"
 log = "0.4"
 priority-queue = "0.5.1"
 jobpool = "0.3.8"
+num_cpus = "1.0"
 
 [lib]
 name = "tange"

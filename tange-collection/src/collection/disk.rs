@@ -31,6 +31,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     }
 
     pub fn from_memory(path: String, mc: &Vec<Deferred<Vec<A>>>) -> DiskCollection<A> {
+        ::std::fs::create_dir_all(&path).expect("Unable to create directory!");
         let shared = Arc::new(path);
         let acc = FileStore::empty(shared.clone());
         let defs = batch_apply(&mc, move |_idx, vs| {

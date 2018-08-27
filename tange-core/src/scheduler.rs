@@ -1,3 +1,4 @@
+extern crate num_cpus;
 extern crate rayon;
 extern crate log;
 extern crate priority_queue;
@@ -134,7 +135,7 @@ fn build_dep_graph(graph: &DAG) -> (DepGraph, DepGraph) {
         }
         // Add outbound
         for h in hs.iter() {
-            let e = outbound.entry(h.clone()).or_insert_with(|| HashSet::new());
+            let e = outbound.entry(h.clone()).or_insert_with(|| HashSet::with_capacity(1));
             e.insert(output.clone());
         }
         inbound.insert(output.clone(), hs);
@@ -150,7 +151,7 @@ fn generate_levels(collapsed: ChainGraph) -> Vec<Vec<Vec<Arc<Handle>>>> {
     let mut outbound = HashMap::new();
     for (nodes, deps) in collapsed.iter() {
         for d in deps.iter() {
-            let e = outbound.entry(d).or_insert_with(|| HashSet::new());
+            let e = outbound.entry(d).or_insert_with(|| HashSet::with_capacity(1));
             e.insert(nodes);
         }
     }
@@ -379,7 +380,12 @@ impl Scheduler for LeveledScheduler{
 pub struct GreedyScheduler(usize);
 
 impl GreedyScheduler {
-    pub fn new(n_threads: usize) -> Self { GreedyScheduler(n_threads) }
+    pub fn new() -> Self {
+        GreedyScheduler(num_cpus::get())
+    }
+    pub fn set_threads(&mut self, n_threads: usize) -> () {
+         self.0 = n_threads;
+    }
 }
 
 impl Scheduler for GreedyScheduler {
