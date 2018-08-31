@@ -11,7 +11,7 @@ use collection::disk::DiskCollection;
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
 use tange::scheduler::Scheduler;
 use partitioned::{join_on_key as jok, partition, partition_by_key, fold_by, concat};
-use interfaces::Memory;
+use interfaces::{Memory,Disk};
 use super::emit;
 
 
@@ -79,6 +79,15 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         let parts = emit(&self.partitions, Memory, f);
 
         MemoryCollection { partitions: parts }
+    }
+
+    pub fn emit_to_disk<
+        B: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>,
+        F: 'static + Sync + Send + Clone + Fn(&A, &mut FnMut(B) -> ())
+    >(&self, path: String, f: F) -> DiskCollection<B> {
+        let parts = emit(&self.partitions, Disk::from_str(&path), f);
+
+        DiskCollection::from_stores(path, parts)
     }
 
     pub fn partition<

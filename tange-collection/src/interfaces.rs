@@ -94,6 +94,12 @@ impl <A: Clone> Stream<A> for Vec<A> {
 #[derive(Clone)]
 pub struct Disk(pub Arc<String>);
 
+impl Disk {
+    pub fn from_str(s: &str) -> Self {
+        Disk(Arc::new(s.to_owned()))
+    }
+}
+
 pub struct DiskBuffer<A> {
     root_path: Arc<String>, 
     name: String,
