@@ -78,18 +78,24 @@ impl DAG {
 
         let mut stack = vec![g];
 
+        let mut hs = HashSet::new();
+
         while !stack.is_empty() {
+            trace!("Stack size: {}", stack.len());
             let ag = stack.pop().unwrap();
-            tasks.insert(ag.handle.clone(), ag.task.clone());
-            dependencies.insert(ag.handle.clone(), ag.args.clone());
-            if let Some(ref fns) = ag.args {
-                match fns {
-                    FnArgs::Single(g) => stack.push(g.clone()),
-                    FnArgs::Join(g1, g2) => {
-                        stack.push(g1.clone());
-                        stack.push(g2.clone());
-                    }
-                };
+            if !hs.contains(&ag.handle) {
+                hs.insert(ag.handle.clone());
+                tasks.insert(ag.handle.clone(), ag.task.clone());
+                dependencies.insert(ag.handle.clone(), ag.args.clone());
+                if let Some(ref fns) = ag.args {
+                    match fns {
+                        FnArgs::Single(g) => stack.push(g.clone()),
+                        FnArgs::Join(g1, g2) => {
+                            stack.push(g1.clone());
+                            stack.push(g2.clone());
+                        }
+                    };
+                }
             }
         }
         DAG {
@@ -396,6 +402,8 @@ impl Scheduler for GreedyScheduler {
     ) -> Option<Arc<BASS>> {
         
         let out_handle = graph.handle.clone();
+
+        trace!("Building Dag...");
         let dag = Arc::new(DAG::new(graph));
         
         debug!("Number of Tasks Specified: {}", dag.tasks.len());
@@ -593,4 +601,4 @@ mod size_test {
         assert_eq!(out, res);
     }
 
-}    
+}

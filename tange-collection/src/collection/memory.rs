@@ -135,10 +135,10 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
     >(
         &self, 
         other: &MemoryCollection<B>, 
-        partitions: usize, 
         key1: KF1, 
         key2: KF2,
-        joiner: J
+        joiner: J,
+        partitions: usize, 
     ) -> MemoryCollection<(K,C)> {
         // Group each by a common key
         let p1 = self.map(move |x| (key1(x), x.clone()))
@@ -283,9 +283,9 @@ mod test_lib {
         let col1 = MemoryCollection::from_vec(vec![1,2,3,1,2usize]);
         let col2 = MemoryCollection::from_vec(
             vec![(2, 1.23f64), (3usize, 2.34)]);
-        let out = col1.join_on(&col2, 5, |x| *x, |y| y.0, |x, y| {
+        let out = col1.join_on(&col2, |x| *x, |y| y.0, |x, y| {
             (*x, y.1)
-        }).split(1).sort_by(|x| x.0);
+        }, 5).split(1).sort_by(|x| x.0);
         let results = out.run(&mut LeveledScheduler).unwrap();
         let expected = vec![(2, (2, 1.23)), (2, (2, 1.23)), (3, (3, 2.34))];
         assert_eq!(results, expected);

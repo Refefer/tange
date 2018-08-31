@@ -158,10 +158,10 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     >(
         &self, 
         other: &DiskCollection<B>, 
-        partitions: usize, 
         key1: KF1, 
         key2: KF2,
-        joiner: J
+        joiner: J,
+        partitions: usize, 
     ) -> DiskCollection<(K,C)> {
         // Group each by a common key
         let p1 = self.map(move |x| (key1(x), x.clone()))
@@ -298,7 +298,7 @@ mod test_lib {
         let computed = col.partition(2, |_idx, x| x % 2)
             .sort_by(|x| *x);
         assert_eq!(computed.partitions.len(), 2);
-        let results = computed.run(&mut GreedyScheduler::new(8)).unwrap();
+        let results = computed.run(&mut GreedyScheduler::new()).unwrap();
         assert_eq!(results, vec![2, 2, 1, 1, 3]);
     }
 
@@ -314,18 +314,17 @@ mod test_lib {
         let col1 = make_col();
         let col2 = DiskCollection::from_vec("/tmp".into(),
             vec![(2, 1.23f64), (3usize, 2.34)]);
-        let out = col1.join_on(&col2, 5, |x| *x, |y| y.0, |x, y| {
+        let out = col1.join_on(&col2, |x| *x, |y| y.0, |x, y| {
             (*x, y.1)
-        }).split(1).sort_by(|x| x.0);
+        }, 5).split(1).sort_by(|x| x.0);
         let results = out.run(&mut LeveledScheduler).unwrap();
         let expected = vec![(2, (2, 1.23)), (2, (2, 1.23)), (3, (3, 2.34))];
         assert_eq!(results, expected);
     }
 
-    /*
     #[test]
     fn test_emit() {
-        let results = DiskCollection::from_vec(vec![1,2,3usize])
+        let results = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize])
             .emit(|num, emitter| {
                 for i in 0..*num {
                     emitter(i);
@@ -337,6 +336,7 @@ mod test_lib {
         assert_eq!(results, expected);
     }
 
+    /*
     #[test]
     fn test_sort() {
         let results = DiskCollection::from_vec(vec![1, 3, 2usize])

@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use self::serde::{Serialize,Deserialize};
-use self::bincode::{serialize_into, deserialize_from};
+use self::bincode::{serialize_into, deserialize_from,ErrorKind};
 use self::uuid::Uuid;
 
 pub trait Accumulator<A>: Send + Sync + Clone  {
@@ -130,7 +130,6 @@ impl <A: Clone + Send + Sync> FileStore<A> {
             pd: PhantomData
         }
     }
-
 }
 
 impl <A: Clone + Send + Sync> Drop for FileStore<A> {
@@ -174,6 +173,7 @@ impl <A: Serialize + Clone + Send + Sync> ValueWriter<A> for DiskBuffer<A> {
         }
     }
 }
+
 
 impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStore<A> {
     type Iter = RecordFile<A>;
@@ -221,7 +221,20 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Iterator for RecordStr
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(ref mut bw) = self.0 {
-            deserialize_from(bw).ok()
+            //deserialize_from(bw).expect("Failure on deserialization!")
+            match deserialize_from(bw) {
+                Ok(record) => Some(record),
+                Err(e) => {
+                    let ek: &ErrorKind = &e;
+                    match ek {
+                        &ErrorKind::DeserializeAnyNotSupported => {
+                            eprintln!("Bincode doesn't work with certain types!");
+                            panic!();
+                        },
+                        _ => None
+                    }
+                }
+            }
         } else {
             None
         }
