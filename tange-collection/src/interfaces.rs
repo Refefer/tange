@@ -3,7 +3,7 @@ extern crate bincode;
 extern crate uuid;
 
 use std::any::Any;
-use std::fs::{File,remove_file, copy};
+use std::fs::{File,remove_file,copy,create_dir_all};
 use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -110,6 +110,10 @@ pub struct DiskBuffer<A> {
 impl <A> DiskBuffer<A> {
     fn new(path: Arc<String>) -> Self {
         let name = format!("{}/tange-{}", &path, Uuid::new_v4());
+        {
+            let p: &str = &path;
+            create_dir_all(p).expect("Unable to create directory!");
+        }
         let fd = File::create(&name).expect("Can't create file!");
         let bw = BufWriter::new(fd);
         DiskBuffer { 

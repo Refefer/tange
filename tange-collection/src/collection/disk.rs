@@ -44,6 +44,10 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         DiskCollection { path: Arc::new(path), partitions: fs }
     }
 
+    pub fn to_defs(&self) -> &Vec<Deferred<FileStore<A>>> {
+        &self.partitions
+    }
+
     pub fn to_memory(&self) -> MemoryCollection<A> {
         let defs = batch_apply(&self.partitions, |_idx, vs| {
             vs.stream().into_iter().collect()

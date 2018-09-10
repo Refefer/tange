@@ -28,6 +28,10 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         }
     }
 
+    pub fn to_defs(&self) -> &Vec<Deferred<Vec<A>>> {
+        &self.partitions
+    }
+
     pub fn from_vec(vs: Vec<A>) -> MemoryCollection<A> {
         MemoryCollection {
             partitions: vec![Deferred::lift(vs, None)],
