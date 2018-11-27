@@ -1,4 +1,3 @@
-#![feature(specialization)]
 extern crate tange;
 
 pub mod utils;

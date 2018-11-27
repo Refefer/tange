@@ -162,6 +162,7 @@ version = "0.1.0"
 dependencies = [
  "jobpool 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num_cpus 1.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "priority-queue 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

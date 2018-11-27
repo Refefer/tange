@@ -53,7 +53,7 @@ impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
 
 
 pub trait Scheduler {
-    fn compute(&mut self, graph: Arc<Graph>) -> Option<Arc<BASS>>; 
+    fn compute(&self, graph: Arc<Graph>) -> Option<Arc<BASS>>; 
 }
 
 enum Limbo {
@@ -335,7 +335,7 @@ pub struct LeveledScheduler;
 impl Scheduler for LeveledScheduler{
 
     fn compute(
-        &mut self, 
+        &self, 
         graph: Arc<Graph>
     ) -> Option<Arc<BASS>> {
         
@@ -397,7 +397,7 @@ impl GreedyScheduler {
 impl Scheduler for GreedyScheduler {
 
     fn compute(
-        &mut self, 
+        &self, 
         graph: Arc<Graph>
     ) -> Option<Arc<BASS>> {
         
