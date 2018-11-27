@@ -1,3 +1,5 @@
+//! Graph definition libraries.  
+//!
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
@@ -10,7 +12,8 @@ pub trait Input: Send + Sync {
     fn read(&self) -> BASS;
 }
 
-/// Unique values representing a task in a Graph
+/// Unique values representing a task in a Graph.  Handles are globally unique and
+/// defined by order.
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
 pub struct Handle(String, usize);
 
@@ -47,10 +50,13 @@ pub enum FnArgs {
 #[derive(Clone)]
 pub struct Graph {
 
+    /// Pointer to the underlying Handle representing this computation
     pub handle: Arc<Handle>,
 
+    /// Task to run
     pub task: Arc<Task>,
 
+    /// Arguments consumed by defined Task
     pub args: Option<FnArgs>
 
 }

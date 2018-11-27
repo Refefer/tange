@@ -19,6 +19,7 @@ use graph::{Graph,Task,Handle,FnArgs};
 type DepGraph = HashMap<Arc<Handle>, HashSet<Arc<Handle>>>; 
 type ChainGraph = HashMap<Vec<Arc<Handle>>, HashSet<Arc<Handle>>>; 
 
+// Keeps track of data that are needed by downstream computations
 #[derive(Debug)]
 struct DataStore<K: PartialEq + Hash + Eq, V> {
     data: HashMap<K, V>,
@@ -26,6 +27,8 @@ struct DataStore<K: PartialEq + Hash + Eq, V> {
 }
 
 impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
+    // Creates a new DataStore
+    // `Counts` are the number of times a piece of data will be consumed.
     fn new(
         data: HashMap<K, V>, 
         counts: HashMap<K, usize>
@@ -33,6 +36,8 @@ impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
         DataStore {data: data, counts: counts}
     }
 
+    // Gets a piece of data from the DataStore.  If the key doesn't exist,
+    // returns None
     fn get(&mut self, handle: &K) -> Option<V> {
         let count = self.counts.get_mut(handle).map(|c| {
             *c -= 1;
@@ -46,13 +51,16 @@ impl <K: PartialEq + Hash + Eq, V: Clone> DataStore<K,V> {
         }
     }
 
+    // Adds a key/value to the datastore.
     fn insert(&mut self, handle: K, data: V) {
         self.data.insert(handle, data);
     }
 }
 
-
+/// Defines the Scheduler object.  Schedulers take in Graphs and return the result
+/// of their computation.
 pub trait Scheduler {
+    /// Compute the given Graph, returning the value.
     fn compute(&self, graph: Arc<Graph>) -> Option<Arc<BASS>>; 
 }
 
@@ -72,6 +80,7 @@ struct DAG {
 }
 
 impl DAG {
+    /// Converts a Graph into a Directed Acyclic Graph.
     fn new(g: Arc<Graph>) -> Self {
         let mut tasks = HashMap::new();
         let mut dependencies = HashMap::new();
@@ -105,6 +114,7 @@ impl DAG {
     }
 }
 
+/// Reads out dependencies into a Limbo object, which is really just a simple Enum
 fn get_fnargs(ds: &mut DataStore<Arc<Handle>,Arc<BASS>>, fa: &FnArgs) -> Option<Limbo> {
     match fa {
         &FnArgs::Single(ref g) => {
@@ -128,6 +138,7 @@ fn build_dep_graph(graph: &DAG) -> (DepGraph, DepGraph) {
     let mut inbound: DepGraph = HashMap::new();
     let mut outbound: DepGraph = HashMap::new();
     for (output, ref inputs) in graph.dependencies.iter() {
+        // Only track unique handles
         let mut hs = HashSet::new();
         if let Some(inp) = inputs {
             let fna: &FnArgs = &inp;
@@ -261,7 +272,9 @@ fn run_task(
     } 
 }
 
-// Finds chains of tasks that can be collapsed into a single task
+// Finds chains of tasks that can be collapsed into a single task.  While this isn't
+// strictly needed, both the LeveledScheduler and GreedyScheduler benefit from it in
+// different ways: 
 use std::fmt::Debug;
 fn collapse_graph<K: Hash + Eq + Debug + Clone>(
     mut nodes: HashMap<K, HashSet<K>>
@@ -330,6 +343,14 @@ fn collapse_graph<K: Hash + Eq + Debug + Clone>(
     new_nodes
 }
 
+/// LeveledScheduler computes sets of mutually exclusive tasks that can be run
+/// concurrently.  Unlike GreedyScheduler, which will immediately consume the next
+/// available task regardless of level, LeveledScheduler will wait for an entire level
+/// to finish computation before moving to the next one.
+///
+/// This has some small benefits when it to reproducibility: it natually is more
+/// deterministic than the GreedyScheduler, though potentially slower in some cases 
+/// a set of tasks on a level are slower.
 pub struct LeveledScheduler;
 
 impl Scheduler for LeveledScheduler{
@@ -371,7 +392,7 @@ impl Scheduler for LeveledScheduler{
         for (i, level) in levels.into_iter().enumerate() {
             debug!("Running level: {}", i);
             // Run graph
-            level.par_iter().for_each(|chain| { run_task(&dag, chain, dsam.clone())})
+            level.par_iter().for_each(|chain| { run_task(&dag, chain, dsam.clone()) })
                 
         }
 
@@ -383,12 +404,18 @@ impl Scheduler for LeveledScheduler{
     }
 }
 
+/// GreedyScheduler is the recommend scheduler for Tange-Core.  After computing the DAG
+/// from the Graph, it uses a priority heap to determine which task to execute next,
+/// biasing toward reduction.  That is, joins are preferred over an apply since it reduces
+/// the number of thunks by one.  Inputs are preferred last.
+///
 pub struct GreedyScheduler(usize);
 
 impl GreedyScheduler {
     pub fn new() -> Self {
         GreedyScheduler(num_cpus::get())
     }
+    /// Sets the number of threads to use.  By default, uses one thread per core.
     pub fn set_threads(&mut self, n_threads: usize) -> () {
          self.0 = n_threads;
     }
