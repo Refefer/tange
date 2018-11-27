@@ -2,6 +2,12 @@
 name = "tange"
 version = "0.1.0"
 authors = ["Andrew Stanton <refefer@gmail.com>"]
+description = "Scalable Task-based Parallelism Framework"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/Refefer/tange/tree/master/tange-core"
+readme = "README.md"
+keywords = ["parallel", "thread", "concurrency", "dataflow", "performance"]
+categories = ["concurrency"]
 
 [dependencies]
 rayon = "1.0"
