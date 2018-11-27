@@ -344,15 +344,13 @@ mod test_lib {
         assert_eq!(results, expected);
     }
 
-    /*
     #[test]
     fn test_sort() {
-        let results = DiskCollection::from_vec(vec![1, 3, 2usize])
+        let results = DiskCollection::from_vec("/tmp".into(), vec![1, 3, 2usize])
             .sort_by(|x| *x)
             .run(&mut LeveledScheduler).unwrap();
         let expected = vec![1, 2, 3];
         assert_eq!(results, expected);
     }
 
-    */
 }
