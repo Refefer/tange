@@ -413,9 +413,12 @@ impl Scheduler for LeveledScheduler{
 pub struct GreedyScheduler(usize);
 
 impl GreedyScheduler {
+
+    /// Creates a new GreedyScheduler with the default number of threads.
     pub fn new() -> Self {
         GreedyScheduler(num_cpus::get())
     }
+
     /// Sets the number of threads to use.  By default, uses one thread per core.
     pub fn set_threads(&mut self, n_threads: usize) -> () {
          self.0 = n_threads;
