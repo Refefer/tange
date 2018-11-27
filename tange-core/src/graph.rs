@@ -1,4 +1,6 @@
-//! Graph definition libraries.  
+//!
+//! Graph definition libraries.  These are typically not used directly, instead accessed
+//! via Deferred objects.
 //!
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};

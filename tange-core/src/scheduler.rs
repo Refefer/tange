@@ -1,3 +1,4 @@
+//! Contains all the runtimes scheduling Graphs for execution.
 extern crate num_cpus;
 extern crate rayon;
 extern crate log;
