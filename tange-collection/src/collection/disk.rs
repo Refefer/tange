@@ -1,3 +1,17 @@
+//! Disk Collections
+//! ---
+//! This module defines the Dataflow interfaces for Out-Of-Core data processing.
+//! `DiskCollection` is intended to be used for processing datasets that might not fit
+//! in memory.  
+//!
+//! Example Usage
+//! ---
+//!
+//! ```rust
+//! 
+//! ```
+//!
+
 extern crate serde;
 use std::fs;
 use std::any::Any;
@@ -18,6 +32,7 @@ use interfaces::*;
 use super::emit;
 
 
+/// DiskCollection struct.
 #[derive(Clone)]
 pub struct DiskCollection<A: Clone + Send + Sync>  {
     path: Arc<String>,
@@ -26,10 +41,22 @@ pub struct DiskCollection<A: Clone + Send + Sync>  {
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<A> {
 
+    /// Create a new DiskCollection form a Vector of objects.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   assert_eq!(col.run(&GreedyScheduler::new()), Some(vec![1,2,3usize]));
+    /// ```
     pub fn from_vec(path: String, vec: Vec<A>) -> DiskCollection<A> {
         MemoryCollection::from_vec(vec).to_disk(path)
     }
 
+    /// Converts a collection of Deferred objects into a DiskCollection
+    /// This is usually best used from the `MemoryCollection`
     pub fn from_memory(path: String, mc: &Vec<Deferred<Vec<A>>>) -> DiskCollection<A> {
         ::std::fs::create_dir_all(&path).expect("Unable to create directory!");
         let shared = Arc::new(path);
@@ -40,14 +67,17 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         DiskCollection { path: shared, partitions: defs }
     }
 
+    /// Creats a DiskCollection for a set of FileStores.
     pub fn from_stores(path: String, fs: Vec<Deferred<FileStore<A>>>) -> DiskCollection<A> {
         DiskCollection { path: Arc::new(path), partitions: fs }
     }
 
+    /// Provides raw access to the underlying partitions
     pub fn to_defs(&self) -> &Vec<Deferred<FileStore<A>>> {
         &self.partitions
     }
 
+    /// Converts a DiskCollection to a MemoryCollection
     pub fn to_memory(&self) -> MemoryCollection<A> {
         let defs = batch_apply(&self.partitions, |_idx, vs| {
             vs.stream().into_iter().collect()
@@ -55,6 +85,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         MemoryCollection::from_defs(defs)
     }
 
+    /// Returns the current number of data partitions 
     pub fn n_partitions(&self) -> usize {
         self.partitions.len()
     }
@@ -63,6 +94,18 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         DiskCollection { path: self.path.clone(), partitions: defs }
     }
 
+    /// Concatentates two collections into a single Collection
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let one = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   let two = DiskCollection::from_vec("/tmp".into(), vec![4usize, 5, 6]);
+    ///   let cat = one.concat(&two);
+    ///   assert_eq!(cat.run(&GreedyScheduler::new()), Some(vec![1,2,3,4,5,6]));
+    /// ```
     pub fn concat(&self, other: &DiskCollection<A>) -> DiskCollection<A> {
         let mut nps: Vec<_> = self.partitions.iter()
             .map(|p| (*p).clone()).collect();
@@ -74,6 +117,18 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.from_defs(nps)
     }
     
+    /// Maps a function over the values in the DiskCollection, returning a new DiskCollection
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let one = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   let strings = one.map(|i| format!("{}", i));
+    ///   assert_eq!(strings.run(&GreedyScheduler::new()), 
+    ///     Some(vec!["1".into(),"2".into(),"3".into()]));
+    /// ```
     pub fn map<
         B: Any + Send + Sync + Clone + Serialize, 
         F: 'static + Sync + Send + Clone + Fn(&A) -> B
@@ -82,6 +137,19 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
             emitter(f(x))
         })
     }
+
+    /// Filters out items in the collection that fail the predicate.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   let odds = col.filter(|x| x % 2 == 1);
+    ///   assert_eq!(odds.run(&GreedyScheduler::new()), 
+    ///     Some(vec![1, 3usize]));
+    /// ```
 
     pub fn filter<
         F: 'static + Sync + Send + Clone + Fn(&A) -> bool
@@ -93,10 +161,39 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         })
     }
     
+    /// Re-partitions a collection by the number of provided chunks.  It uniformly distributes data from each old partition into each new partition.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   assert_eq!(col.n_partitions(), 1);
+    ///   let two = col.split(2);
+    ///   assert_eq!(two.n_partitions(), 2);
+    /// ```
+
     pub fn split(&self, n_chunks: usize) -> DiskCollection<A> {
         self.partition(n_chunks, |idx, _k| idx)
     }
 
+    /// Maps over all items in a collection, optionally emitting new values.  It can be used
+    /// to efficiently fuse a number of map/filter/flat_map functions into a single method.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3usize]);
+    ///   let new = col.emit(|item, emitter| {
+    ///     if item % 2 == 0 {
+    ///         emitter(format!("{}!", item));
+    ///     }
+    ///   });
+    ///   assert_eq!(new.run(&GreedyScheduler::new()), Some(vec!["2!".into()]));
+    /// ```
     pub fn emit<
         B: Any + Send + Sync + Clone + Serialize,
         F: 'static + Sync + Send + Clone + Fn(&A, &mut FnMut(B) -> ())
@@ -107,6 +204,22 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.from_defs(parts)
     }
 
+    /// Re-partitions data into N new partitions by the given function.  The user provided
+    /// function is used as a hash function, mapping the returned value to a partition index.
+    /// This makes it useful for managing which partition data ends up!
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3,4usize]);
+    ///   let new_col = col.partition(2, |idx, x| if *x < 3 { 1 } else { 2 });
+    ///   
+    ///   assert_eq!(new_col.n_partitions(), 2);
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![3, 4, 1, 2]));
+    /// ```
+
     pub fn partition<
         F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
     >(&self, partitions: usize, f: F) -> DiskCollection<A> {
@@ -116,6 +229,33 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         // Loop over each bucket
         self.from_defs(new_chunks)
     }
+
+    /// Folds and accumulates values across multiple partitions into K new partitions.
+    /// This is also known as a "group by" with a following reducer.
+    ///
+    /// DiskCollection first performs a block aggregation: that is, it combines values
+    /// within each partition first using the `binop` function.  It then hashes
+    /// each key to a new partition index, where it will then aggregate all keys using the
+    /// `reduce` function.
+    ///
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3,4,5usize]);
+    ///   // Sum all odds and evens together
+    ///   let group_sum = col.fold_by(|x| x % 2,
+    ///                               || 0usize,
+    ///                               |block_acc, item| {*block_acc += *item},
+    ///                               |part_acc1, part_acc2| {*part_acc1 += *part_acc2},
+    ///                               1)
+    ///                   .sort_by(|x| x.0);
+    ///   
+    ///   assert_eq!(group_sum.n_partitions(), 1);
+    ///   assert_eq!(group_sum.run(&GreedyScheduler::new()), Some(vec![(0, 6), (1, 9)]));
+    /// ```
 
     pub fn fold_by<K: Any + Sync + Send + Clone + Hash + Eq + Serialize + for<'de> Deserialize<'de>,
                    B: Any + Sync + Send + Clone + Serialize + for<'de> Deserialize<'de>,
@@ -130,6 +270,21 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.from_defs(results)
     }
 
+    /// Simple function to re-partition values by a given key.  The return key is hashed
+    /// and moduloed by the new partition count to determine where it will end up.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3,4usize]);
+    ///   let new_col = col.partition_by_key(2, |x| format!("{}", x));
+    ///   
+    ///   assert_eq!(new_col.n_partitions(), 2);
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![4, 1, 2, 3]));
+    /// ```
+
     pub fn partition_by_key<
         K: Any + Sync + Send + Clone + Hash + Eq,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
@@ -139,7 +294,20 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.from_defs(groups)
     }
 
-    pub fn sort_by<
+    /// Sorts values within each partition by a key function.  If a global sort is desired,
+    /// the collection needs to be re-partitioned into a single partition
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1,2,3,4i32]);
+    ///   let new_col = col.sort_by(|x| -*x);
+    ///   
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![4, 3, 2, 1]));
+    /// ```
+pub fn sort_by<
         K: Ord,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
     >(&self, key: F) -> DiskCollection<A> {
@@ -155,6 +323,28 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         });
         self.from_defs(nps)
     }
+
+    /// Inner Joins two collections by the provided key function.
+    /// If multiple values of the same key are found, they will be cross product for each
+    /// pair found.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   let name_age: Vec<(String,u32)> = vec![("Andrew".into(), 33), ("Leah".into(), 12)];
+    ///   let name_money: Vec<(String,f32)> = vec![("Leah".into(), 20.50)];
+    ///   
+    ///   let na = DiskCollection::from_vec("/tmp".into(), name_age);
+    ///   let nm = DiskCollection::from_vec("/tmp".into(), name_money);
+    ///   let joined = na.join_on(&nm,
+    ///                           |nax| nax.0.clone(),
+    ///                           |nmx| nmx.0.clone(),
+    ///                           |nax, nmx| (nax.0.clone(), nax.1, nmx.1),
+    ///                           1);
+    ///   assert_eq!(joined.run(&GreedyScheduler::new()), 
+    ///           Some(vec![("Leah".into(), ("Leah".into(), 12, 20.50))]));
+    /// ```
 
     pub fn join_on<
         K: Any + Sync + Send + Clone + Hash + Eq + Serialize + for<'de> Deserialize<'de>,
@@ -186,7 +376,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.from_defs(new_parts)
     }
 
-    pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<Vec<A>> {
+    pub fn run<S: Scheduler>(&self, s: &S) -> Option<Vec<A>> {
         let defs = batch_apply(&self.partitions, |_idx, vs| {
             vs.stream().into_iter().collect::<Vec<_>>()
         });
@@ -275,7 +465,7 @@ mod test_lib {
     fn test_fold_by() {
         let col = make_col();
         let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 1);
-        let mut results = out.run(&mut LeveledScheduler).unwrap();
+        let mut results = out.run(&LeveledScheduler).unwrap();
         results.sort();
         assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
     }
@@ -285,7 +475,7 @@ mod test_lib {
         let col = make_col();
         let out = col.fold_by(|x| *x, || 0, |x, _y| *x += 1, |x, y| *x += y, 2);
         assert_eq!(out.partitions.len(), 2);
-        let mut results = out.run(&mut LeveledScheduler).unwrap();
+        let mut results = out.run(&LeveledScheduler).unwrap();
         results.sort();
         assert_eq!(results, vec![(1, 2), (2, 2), (3, 1)]);
     }
@@ -296,7 +486,7 @@ mod test_lib {
         let computed = col.partition_by_key(2, |x| *x)
             .sort_by(|x| *x);
         assert_eq!(computed.partitions.len(), 2);
-        let results = computed.run(&mut LeveledScheduler).unwrap();
+        let results = computed.run(&LeveledScheduler).unwrap();
         assert_eq!(results, vec![2, 2, 3, 1, 1]);
     }
 
@@ -306,7 +496,7 @@ mod test_lib {
         let computed = col.partition(2, |_idx, x| x % 2)
             .sort_by(|x| *x);
         assert_eq!(computed.partitions.len(), 2);
-        let results = computed.run(&mut GreedyScheduler::new()).unwrap();
+        let results = computed.run(&GreedyScheduler::new()).unwrap();
         assert_eq!(results, vec![2, 2, 1, 1, 3]);
     }
 
@@ -325,7 +515,7 @@ mod test_lib {
         let out = col1.join_on(&col2, |x| *x, |y| y.0, |x, y| {
             (*x, y.1)
         }, 5).split(1).sort_by(|x| x.0);
-        let results = out.run(&mut LeveledScheduler).unwrap();
+        let results = out.run(&LeveledScheduler).unwrap();
         let expected = vec![(2, (2, 1.23)), (2, (2, 1.23)), (3, (3, 2.34))];
         assert_eq!(results, expected);
     }
@@ -339,7 +529,7 @@ mod test_lib {
                 }
             })
             .sort_by(|x| *x)
-            .run(&mut LeveledScheduler).unwrap();
+            .run(&LeveledScheduler).unwrap();
         let expected = vec![0, 0, 0, 1, 1, 2];
         assert_eq!(results, expected);
     }
@@ -348,7 +538,7 @@ mod test_lib {
     fn test_sort() {
         let results = DiskCollection::from_vec("/tmp".into(), vec![1, 3, 2usize])
             .sort_by(|x| *x)
-            .run(&mut LeveledScheduler).unwrap();
+            .run(&LeveledScheduler).unwrap();
         let expected = vec![1, 2, 3];
         assert_eq!(results, expected);
     }

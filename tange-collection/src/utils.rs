@@ -1,3 +1,4 @@
+//! Utilities for creating collections
 use std::io::prelude::*;
 use std::io::{SeekFrom,BufReader,Error};
 use std::fs::{File,metadata};
@@ -9,6 +10,7 @@ use collection::memory::MemoryCollection;
 #[derive(Clone)]
 struct Chunk { path: String, start: u64, end: u64 }
 
+/// Reads a new-line delimited text file, creating a new partition every `chunk_size`
 pub fn read_text(path: &str, chunk_size: u64) -> Result<MemoryCollection<String>,Error> {
     // Read the file size
     let file_size = metadata(path)?.len();

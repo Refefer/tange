@@ -1,9 +1,5 @@
-//! tange-core
+//! Defines the Deferred primitive
 //!
-//! `tange-core` provides primitives for building and running task-based computations.
-
-#![warn(missing_docs)]
-
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::any::Any;
