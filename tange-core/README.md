@@ -22,6 +22,26 @@ Tange defines a `Deferred` struct which represents a computation.  `Deferred` ob
 2. `apply` - Apply applies a function to a Deferred, producing a new Deferred object.
 3. `join` -  Join combines two Deferred objects with a joiner function, producing a new Deferred.
 
+Example - Hello World
+---
+
+```rust
+use tange::deferred::Deferred;
+use tange::scheduler::GreedyScheduler;
+
+// Create two Deferred object
+let hello = Deferred::lift("Hello".to_owned(), None);
+let world = Deferred::lift("World".to_owned(), None);
+
+// Add an exclamation mark to "World"
+let world_exclaim = world.apply(|w| format!("{}!", w));
+
+// Join the words!
+let hello_world = hello.join(&world_exclaim, |h, w| format!("{} {}", h, w));
+
+assert_eq!(hello_world.run(&GreedyScheduler::new()), Some("Hello World!".into()));
+```
+
 Example
 ---
 
