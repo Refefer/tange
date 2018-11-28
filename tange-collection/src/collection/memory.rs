@@ -1,3 +1,10 @@
+//! MemoryCollection
+//! ---
+//! MemoryCollection provides a variety of dataflow operators for consuming and mutating
+//! data.  Unlike its Disk-based counterpart, DiskCollection, MemoryCollection keeps all
+//! data in memory, maximizing speed.
+//!
+
 extern crate serde;
 use std::fs;
 use std::any::Any;
@@ -15,6 +22,7 @@ use interfaces::{Memory,Disk};
 use super::emit;
 
 
+/// MemoryCollection struct
 #[derive(Clone)]
 pub struct MemoryCollection<A>  {
     partitions: Vec<Deferred<Vec<A>>>
@@ -22,26 +30,51 @@ pub struct MemoryCollection<A>  {
 
 impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
 
+    /// Creates a MemoryCollection from a set of Deferred objects.
     pub fn from_defs(vs: Vec<Deferred<Vec<A>>>) -> MemoryCollection<A> {
         MemoryCollection {
             partitions: vs
         }
     }
 
+    /// Provides raw access to the underlying Deferred objects
     pub fn to_defs(&self) -> &Vec<Deferred<Vec<A>>> {
         &self.partitions
     }
 
+    /// Creates a new MemoryCollection from a Vec of items
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   assert_eq!(col.run(&GreedyScheduler::new()), Some(vec![1,2,3usize]));
+    /// ```
     pub fn from_vec(vs: Vec<A>) -> MemoryCollection<A> {
         MemoryCollection {
             partitions: vec![Deferred::lift(vs, None)],
         }
     }
 
+    /// Returns the current number of data partitions 
     pub fn n_partitions(&self) -> usize {
         self.partitions.len()
     }
 
+    /// Concatentates two collections into a single Collection
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let one = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   let two = MemoryCollection::from_vec(vec![4usize, 5, 6]);
+    ///   let cat = one.concat(&two);
+    ///   assert_eq!(cat.run(&GreedyScheduler::new()), Some(vec![1,2,3,4,5,6]));
+    /// ```
     pub fn concat(&self, other: &MemoryCollection<A>) -> MemoryCollection<A> {
         let mut nps: Vec<_> = self.partitions.iter()
             .map(|p| (*p).clone()).collect();
@@ -53,6 +86,18 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         MemoryCollection { partitions: nps }
     }
     
+    /// Maps a function over the values in the DiskCollection, returning a new DiskCollection
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let one = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   let strings = one.map(|i| format!("{}", i));
+    ///   assert_eq!(strings.run(&GreedyScheduler::new()), 
+    ///     Some(vec!["1".into(),"2".into(),"3".into()]));
+    /// ```
     pub fn map<
         B: Any + Send + Sync + Clone, 
         F: 'static + Sync + Send + Clone + Fn(&A) -> B
@@ -61,6 +106,19 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
             emitter(f(x))
         })
     }
+
+    /// Filters out items in the collection that fail the predicate.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   let odds = col.filter(|x| x % 2 == 1);
+    ///   assert_eq!(odds.run(&GreedyScheduler::new()), 
+    ///     Some(vec![1, 3usize]));
+    /// ```
 
     pub fn filter<
         F: 'static + Sync + Send + Clone + Fn(&A) -> bool
@@ -72,9 +130,38 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         })
     }
     
+    /// Re-partitions a collection by the number of provided chunks.  It uniformly distributes data from each old partition into each new partition.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   assert_eq!(col.n_partitions(), 1);
+    ///   let two = col.split(2);
+    ///   assert_eq!(two.n_partitions(), 2);
+    /// ```
     pub fn split(&self, n_chunks: usize) -> MemoryCollection<A> {
         self.partition(n_chunks, |idx, _k| idx)
     }
+
+    /// Maps over all items in a collection, optionally emitting new values.  It can be used
+    /// to efficiently fuse a number of map/filter/flat_map functions into a single method.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   let new = col.emit(|item, emitter| {
+    ///     if item % 2 == 0 {
+    ///         emitter(format!("{}!", item));
+    ///     }
+    ///   });
+    ///   assert_eq!(new.run(&GreedyScheduler::new()), Some(vec!["2!".into()]));
+    /// ```
 
     pub fn emit<
         B: Any + Send + Sync + Clone,
@@ -85,6 +172,25 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         MemoryCollection { partitions: parts }
     }
 
+    /// Maps over all items in a collection, emitting new values.  It can be used
+    /// to efficiently fuse a number of map/filter/flat_map functions into a single method.
+    /// `emit_to_disk` differs from the original `emit` by writing the emitted values directly
+    /// to disk, returning a DiskCollection instead of MemoryCollection.  This makes it convenient to switch to out-of-core when needed.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3usize]);
+    ///   let new = col.emit_to_disk("/tmp".into(), |item, emitter| {
+    ///     if item % 2 == 0 {
+    ///         emitter(format!("{}!", item));
+    ///     }
+    ///   });
+    ///   assert_eq!(new.run(&GreedyScheduler::new()), Some(vec!["2!".into()]));
+    /// ```
+
     pub fn emit_to_disk<
         B: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>,
         F: 'static + Sync + Send + Clone + Fn(&A, &mut FnMut(B) -> ())
@@ -94,6 +200,21 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         DiskCollection::from_stores(path, parts)
     }
 
+    /// Re-partitions data into N new partitions by the given function.  The user provided
+    /// function is used as a hash function, mapping the returned value to a partition index.
+    /// This makes it useful for managing which partition data ends up!
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3,4usize]);
+    ///   let new_col = col.partition(2, |idx, x| if *x < 3 { 1 } else { 2 });
+    ///   
+    ///   assert_eq!(new_col.n_partitions(), 2);
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![3, 4, 1, 2]));
+    /// ```
     pub fn partition<
         F: 'static + Sync + Send + Clone + Fn(usize, &A) -> usize
     >(&self, partitions: usize, f: F) -> MemoryCollection<A> {
@@ -103,6 +224,33 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         // Loop over each bucket
         MemoryCollection { partitions: new_chunks }
     }
+
+    /// Folds and accumulates values across multiple partitions into K new partitions.
+    /// This is also known as a "group by" with a following reducer.
+    ///
+    /// MemoryCollection first performs a block aggregation: that is, it combines values
+    /// within each partition first using the `binop` function.  It then hashes
+    /// each key to a new partition index, where it will then aggregate all keys using the
+    /// `reduce` function.
+    ///
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3,4,5usize]);
+    ///   // Sum all odds and evens together
+    ///   let group_sum = col.fold_by(|x| x % 2,
+    ///                               || 0usize,
+    ///                               |block_acc, item| {*block_acc += *item},
+    ///                               |part_acc1, part_acc2| {*part_acc1 += *part_acc2},
+    ///                               1)
+    ///                   .sort_by(|x| x.0);
+    ///   
+    ///   assert_eq!(group_sum.n_partitions(), 1);
+    ///   assert_eq!(group_sum.run(&GreedyScheduler::new()), Some(vec![(0, 6), (1, 9)]));
+    /// ```
 
     pub fn fold_by<K: Any + Sync + Send + Clone + Hash + Eq,
                    B: Any + Sync + Send + Clone,
@@ -117,6 +265,20 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         MemoryCollection { partitions: results }
     }
 
+    /// Simple function to re-partition values by a given key.  The return key is hashed
+    /// and moduloed by the new partition count to determine where it will end up.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3,4usize]);
+    ///   let new_col = col.partition_by_key(2, |x| format!("{}", x));
+    ///   
+    ///   assert_eq!(new_col.n_partitions(), 2);
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![4, 1, 2, 3]));
+    /// ```
     pub fn partition_by_key<
         K: Any + Sync + Send + Clone + Hash + Eq,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
@@ -126,6 +288,19 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         MemoryCollection {partitions: groups}
     }
 
+    /// Sorts values within each partition by a key function.  If a global sort is desired,
+    /// the collection needs to be re-partitioned into a single partition
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1,2,3,4i32]);
+    ///   let new_col = col.sort_by(|x| -*x);
+    ///   
+    ///   assert_eq!(new_col.run(&GreedyScheduler::new()), Some(vec![4, 3, 2, 1]));
+    /// ```
     pub fn sort_by<
         K: Ord,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
@@ -137,6 +312,29 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         });
         MemoryCollection { partitions: nps }
     }
+
+    /// Inner Joins two collections by the provided key function.
+    /// If multiple values of the same key are found, they will be cross product for each
+    /// pair found.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///
+    ///   let name_age: Vec<(String,u32)> = vec![("Andrew".into(), 33), ("Leah".into(), 12)];
+    ///   let name_money: Vec<(String,f32)> = vec![("Leah".into(), 20.50)];
+    ///   
+    ///   let na = MemoryCollection::from_vec(name_age);
+    ///   let nm = MemoryCollection::from_vec(name_money);
+    ///   let joined = na.join_on(&nm,
+    ///                           |nax| nax.0.clone(),
+    ///                           |nmx| nmx.0.clone(),
+    ///                           |nax, nmx| (nax.0.clone(), nax.1, nmx.1),
+    ///                           1);
+    ///   assert_eq!(joined.run(&GreedyScheduler::new()), 
+    ///           Some(vec![("Leah".into(), ("Leah".into(), 12, 20.50))]));
+    /// ```
 
     pub fn join_on<
         K: Any + Sync + Send + Clone + Hash + Eq,
@@ -167,7 +365,8 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         MemoryCollection { partitions: new_parts }
     }
 
-    pub fn run<S: Scheduler>(&self, s: &mut S) -> Option<Vec<A>> {
+    /// Executes the Collection, returning the result of the computation
+    pub fn run<S: Scheduler>(&self, s: &S) -> Option<Vec<A>> {
         let cat = tree_reduce(&self.partitions, |x, y| {
             let mut v1: Vec<_> = (*x).clone();
             for yi in y {
@@ -180,6 +379,19 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
 }
 
 impl <A: Any + Send + Sync + Clone> MemoryCollection<Vec<A>> {
+
+    /// Flattens a vector of values
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![vec![1usize,2],vec![3,4]]);
+    ///   let flattened = col.flatten();
+    ///   assert_eq!(flattened.run(&GreedyScheduler::new()), Some(vec![1, 2, 3, 4]));
+    /// ```
+
     pub fn flatten(&self) -> MemoryCollection<A> {
         self.emit(move |x, emitter| {
             for xi in x {
@@ -190,6 +402,19 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<Vec<A>> {
 }
 
 impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
+
+    /// Returns the number of items in the collection.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![vec![1usize,2],vec![3,4]]);
+    ///   assert_eq!(col.count().run(&GreedyScheduler::new()), Some(vec![2]));
+    ///   let flattened = col.flatten();
+    ///   assert_eq!(flattened.count().run(&GreedyScheduler::new()), Some(vec![4]));
+    /// ```
     pub fn count(&self) -> MemoryCollection<usize> {
         let nps = batch_apply(&self.partitions, |_idx, vs| vs.len());
         let count = tree_reduce(&nps, |x, y| x + y).unwrap();
@@ -199,7 +424,19 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
 }
 
 impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> MemoryCollection<A> {
-    pub fn frequencies(&self, partitions: usize) -> MemoryCollection<(A, usize)> {
+
+    /// Computes the frequencies of the items in collection.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::memory::MemoryCollection;
+    ///   
+    ///   let col = MemoryCollection::from_vec(vec![1, 2, 1, 5, 1, 2]);
+    ///   let freqs = col.frequencies(1).sort_by(|x| x.0);
+    ///   assert_eq!(freqs.run(&GreedyScheduler::new()), Some(vec![(1, 3), (2, 2), (5, 1)]));
+    /// ```
+pub fn frequencies(&self, partitions: usize) -> MemoryCollection<(A, usize)> {
         //self.partition(chunks, |x| x);
         self.fold_by(|s| s.clone(), 
                      || 0usize, 
@@ -211,6 +448,9 @@ impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq> MemoryCollection<A> 
 
 // Writes out data
 impl MemoryCollection<String> {
+
+    /// Writes each record in a collection to disk, newline delimited.
+    /// MemoryCollection will create a new file within the path for each partition.
     pub fn sink(&self, path: &'static str) -> MemoryCollection<usize> {
         let pats = batch_apply(&self.partitions, move |idx, vs| {
             fs::create_dir_all(path)
@@ -235,6 +475,7 @@ impl MemoryCollection<String> {
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> MemoryCollection<A> {
 
+    /// Copies the MemoryCollection to disk, returning a DiskCollection
     pub fn to_disk(&self, path: String) -> DiskCollection<A> {
         DiskCollection::from_memory(path, &self.partitions)
     }

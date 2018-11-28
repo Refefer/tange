@@ -2,14 +2,12 @@
 //! ---
 //! This module defines the Dataflow interfaces for Out-Of-Core data processing.
 //! `DiskCollection` is intended to be used for processing datasets that might not fit
-//! in memory.  
+//! in memory.
 //!
-//! Example Usage
-//! ---
-//!
-//! ```rust
-//! 
-//! ```
+//! All partitions are written to disk for every application, cleaning up the file when
+//! finished.  This allows DiskCollection to only need the currently executing task in
+//! in memory.  However, this also means there is going to be a fair amount of serialization/deserialization.
+//! Under the surface, we use bincode to serialize dat quickly to minmize the penalty.
 //!
 
 extern crate serde;
@@ -345,7 +343,6 @@ pub fn sort_by<
     ///   assert_eq!(joined.run(&GreedyScheduler::new()), 
     ///           Some(vec![("Leah".into(), ("Leah".into(), 12, 20.50))]));
     /// ```
-
     pub fn join_on<
         K: Any + Sync + Send + Clone + Hash + Eq + Serialize + for<'de> Deserialize<'de>,
         B: Any + Sync + Send + Clone + Serialize + for<'de> Deserialize<'de>,
@@ -376,6 +373,7 @@ pub fn sort_by<
         self.from_defs(new_parts)
     }
 
+    /// Executes the Collection, returning the result of the computation
     pub fn run<S: Scheduler>(&self, s: &S) -> Option<Vec<A>> {
         let defs = batch_apply(&self.partitions, |_idx, vs| {
             vs.stream().into_iter().collect::<Vec<_>>()
@@ -392,6 +390,17 @@ pub fn sort_by<
 }
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<Vec<A>> {
+    /// Flattens a vector of values
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![vec![1usize,2],vec![3,4]]);
+    ///   let flattened = col.flatten();
+    ///   assert_eq!(flattened.run(&GreedyScheduler::new()), Some(vec![1, 2, 3, 4]));
+    /// ```
     pub fn flatten(&self) -> DiskCollection<A> {
         self.emit(move |x, emitter| {
             for xi in x {
@@ -402,6 +411,18 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
 }
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<A> {
+    /// Returns the number of items in the collection
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![vec![1usize,2],vec![3,4]]);
+    ///   assert_eq!(col.count().run(&GreedyScheduler::new()), Some(vec![2]));
+    ///   let flattened = col.flatten();
+    ///   assert_eq!(flattened.count().run(&GreedyScheduler::new()), Some(vec![4]));
+    /// ```
     pub fn count(&self) -> DiskCollection<usize> {
         let nps = batch_apply(&self.partitions, |_idx, vs| {
             vs.stream().into_iter().map(|_| 1usize).sum::<usize>()
@@ -416,7 +437,19 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
 }
 
 impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq + Serialize + for<'de>Deserialize<'de>> DiskCollection<A> {
-    pub fn frequencies(&self, partitions: usize) -> DiskCollection<(A, usize)> {
+
+    /// Computes the frequencies of the items in collection.
+    /// ```rust
+    ///   extern crate tange;
+    ///   extern crate tange_collection;
+    ///   use tange::scheduler::GreedyScheduler;
+    ///   use tange_collection::collection::disk::DiskCollection;
+    ///   
+    ///   let col = DiskCollection::from_vec("/tmp".into(), vec![1, 2, 1, 5, 1, 2]);
+    ///   let freqs = col.frequencies(1).sort_by(|x| x.0);
+    ///   assert_eq!(freqs.run(&GreedyScheduler::new()), Some(vec![(1, 3), (2, 2), (5, 1)]));
+    /// ```
+pub fn frequencies(&self, partitions: usize) -> DiskCollection<(A, usize)> {
         //self.partition(chunks, |x| x);
         self.fold_by(|s| s.clone(), 
                      || 0usize, 
@@ -428,6 +461,8 @@ impl <A: Any + Send + Sync + Clone + PartialEq + Hash + Eq + Serialize + for<'de
 
 // Writes out data
 impl DiskCollection<String> {
+    /// Writes each record in a collection to disk, newline delimited.
+    /// DiskCollection will create anew file within the path for each partition written.
     pub fn sink(&self, path: &'static str) -> DiskCollection<usize> {
         let acc = FileStore::empty(self.path.clone());
         let pats = batch_apply(&self.partitions, move |idx, vs| {
