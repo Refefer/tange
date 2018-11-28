@@ -1,7 +1,13 @@
 [package]
 name = "tange-collection"
 version = "0.1.0"
-authors = ["Andrew Stanton <astanton@etsy.com>"]
+authors = ["Andrew Stanton <refefer@gmail.com>"]
+description = "Dataflow parallelism"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/Refefer/tange/tree/master/tange-collection"
+readme = "README.md"
+keywords = ["parallel", "thread", "concurrency", "dataflow", "performance"]
+categories = ["concurrency", "algorithms"]
 
 [dependencies]
 tange = "0.1.0"
