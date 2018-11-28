@@ -12,7 +12,7 @@
 //! Example - Word Count
 //! ---
 //!
-//! ```rust
+//! ```ignore
 //! extern crate tange;
 //! extern crate tange_collection;
 //! 
@@ -41,7 +41,7 @@
 //! ```
 //! Example - IDF count
 //! ---
-//! ```rust
+//! ```ignore
 //! extern crate tange;
 //! extern crate tange_collection;
 //! 
@@ -52,7 +52,6 @@
 //! use std::collections::HashSet;
 //! 
 //! fn main() {
-//!     env_logger::init();
 //!      
 //!     let path = args().nth(1).unwrap();
 //!     let col = read_text(&path, 64_000_000)
