@@ -1,4 +1,9 @@
+//! Contains the two main primitives: MemoryCollection and DiskCollection
+
+/// Defines MemoryCollection and assorted functions
 pub mod memory;
+
+/// Defines DiskCollection and assorted functions
 pub mod disk;
 
 use std::any::Any;
