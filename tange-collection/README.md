@@ -9,6 +9,13 @@ Tange-Collection provides dataflow operatores for quickly executing data process
 It was created to solve the same sort of processing tasks as Dask and Spark, with a higher
 emphasis on batch processing rather than analytics.
 
+API
+---
+
+* [Overall](https://docs.rs/tange-collection/0.1.0/tange_collection/)
+* [MemoryCollection](https://docs.rs/tange-collection/0.1.0/tange_collection/collection/memory/struct.MemoryCollection.html)
+* [DiskCollection](https://docs.rs/tange-collection/0.1.0/tange_collection/collection/disk/struct.DiskCollection.html)
+
 Example - Word Count
 ---
 
