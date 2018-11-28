@@ -2,7 +2,7 @@
 name = "tange-collection"
 version = "0.1.0"
 authors = ["Andrew Stanton <refefer@gmail.com>"]
-description = "Dataflow parallelism"
+description = "Dataflow computation"
 license = "Apache-2.0/MIT"
 repository = "https://github.com/Refefer/tange/tree/master/tange-collection"
 readme = "README.md"
