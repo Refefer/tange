@@ -34,7 +34,7 @@ use super::emit;
 #[derive(Clone)]
 pub struct DiskCollection<A: Clone + Send + Sync>  {
     path: Arc<String>,
-    partitions: Vec<Deferred<FileStore<A>>>
+    partitions: Vec<Deferred<Arc<FileStore<A>>>>
 }
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<A> {
@@ -58,7 +58,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     pub fn from_memory(path: String, mc: &Vec<Deferred<Vec<A>>>) -> DiskCollection<A> {
         ::std::fs::create_dir_all(&path).expect("Unable to create directory!");
         let shared = Arc::new(path);
-        let acc = FileStore::empty(shared.clone());
+        let acc = Arc::new(FileStore::empty(shared.clone()));
         let defs = batch_apply(&mc, move |_idx, vs| {
             acc.write_vec(vs.clone())
         });
@@ -66,12 +66,12 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     }
 
     /// Creats a DiskCollection for a set of FileStores.
-    pub fn from_stores(path: String, fs: Vec<Deferred<FileStore<A>>>) -> DiskCollection<A> {
+    pub fn from_stores(path: String, fs: Vec<Deferred<Arc<FileStore<A>>>>) -> DiskCollection<A> {
         DiskCollection { path: Arc::new(path), partitions: fs }
     }
 
     /// Provides raw access to the underlying partitions
-    pub fn to_defs(&self) -> &Vec<Deferred<FileStore<A>>> {
+    pub fn to_defs(&self) -> &Vec<Deferred<Arc<FileStore<A>>>> {
         &self.partitions
     }
 
@@ -88,7 +88,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
         self.partitions.len()
     }
 
-    fn from_defs<B: Clone + Send + Sync>(&self, defs: Vec<Deferred<FileStore<B>>>) -> DiskCollection<B> {
+    fn from_defs<B: Clone + Send + Sync>(&self, defs: Vec<Deferred<Arc<FileStore<B>>>>) -> DiskCollection<B> {
         DiskCollection { path: self.path.clone(), partitions: defs }
     }
 
@@ -263,8 +263,9 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
                    R: 'static + Sync + Send + Clone + Fn(&mut B, &B) -> ()>(
         &self, key: F, default: D, binop: O, reduce: R, partitions: usize
     ) -> DiskCollection<(K,B)> {
+        let fs = Arc::new(FileStore::empty(self.path.clone()));
         let results = fold_by(&self.partitions, key, default, binop, 
-                              reduce, FileStore::empty(self.path.clone()), partitions);
+                              reduce, fs, partitions);
         self.from_defs(results)
     }
 
@@ -309,7 +310,7 @@ pub fn sort_by<
         K: Ord,
         F: 'static + Sync + Send + Clone + Fn(&A) -> K
     >(&self, key: F) -> DiskCollection<A> {
-        let acc = FileStore::empty(self.path.clone());
+        let acc = Arc::new(FileStore::empty(self.path.clone()));
         let nps = batch_apply(&self.partitions, move |_idx, vs| {
             let mut out = acc.writer();
             let mut v2: Vec<_> = vs.stream().into_iter().collect();
@@ -366,7 +367,7 @@ pub fn sort_by<
 
         let mut new_parts = Vec::with_capacity(p1.partitions.len());
         for (l, r) in p1.partitions.iter().zip(p2.partitions.iter()) {
-            let acc = FileStore::empty(self.path.clone());
+            let acc = Arc::new(FileStore::empty(self.path.clone()));
             new_parts.push(jok(l, r, acc, joiner.clone()));
         }
 
@@ -428,7 +429,7 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
             vs.stream().into_iter().map(|_| 1usize).sum::<usize>()
         });
         let count = tree_reduce(&nps, |x, y| x + y).unwrap();
-        let acc = FileStore::empty(self.path.clone());
+        let acc = Arc::new(FileStore::empty(self.path.clone()));
         let out = count.apply(move |x| {
             acc.write_vec(vec![*x])
         });
@@ -464,7 +465,7 @@ impl DiskCollection<String> {
     /// Writes each record in a collection to disk, newline delimited.
     /// DiskCollection will create anew file within the path for each partition written.
     pub fn sink(&self, path: &'static str) -> DiskCollection<usize> {
-        let acc = FileStore::empty(self.path.clone());
+        let acc = Arc::new(FileStore::empty(self.path.clone()));
         let pats = batch_apply(&self.partitions, move |idx, vs| {
             fs::create_dir_all(path)
                 .expect("Welp, something went terribly wrong when creating directory");

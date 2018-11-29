@@ -186,7 +186,7 @@ impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for Disk {
     }
 }
 
-impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for FileStore<A> {
+impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for Arc<FileStore<A>> {
     type VW = DiskBuffer<A>;
 
     fn writer(&self) -> Self::VW {
@@ -195,23 +195,23 @@ impl <A: Serialize + Clone + Send + Sync> Accumulator<A> for FileStore<A> {
 }
 
 impl <A: Serialize + Clone + Send + Sync> ValueWriter<A> for DiskBuffer<A> {
-    type Out = FileStore<A>;
+    type Out = Arc<FileStore<A>>;
 
     fn add(&mut self, item: A) -> () {
         serialize_into(&mut self.out, &item).expect("Couldn't write record!");
     }
 
     fn finish(self) -> Self::Out {
-        FileStore { 
+        Arc::new(FileStore { 
             root_path: self.root_path.clone(), 
             name: Some(self.name), 
             pd: PhantomData
-        }
+        })
     }
 }
 
 
-impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStore<A> {
+impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for Arc<FileStore<A>> {
     type Iter = RecordFile<A>;
 
     fn stream(&self) -> Self::Iter {
@@ -220,6 +220,8 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStor
 
     fn copy(&self) -> Self {
         if let Some(ref name) = self.name {
+            self.clone()
+            /*
             let new_name = format!("{}/tange-{}", &self.root_path, Uuid::new_v4());
             copy(name, &new_name).expect("Failed to copy file!");
             FileStore {
@@ -227,8 +229,9 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for FileStor
                 name: Some(new_name),
                 pd: PhantomData
             }
+            */
         } else {
-            FileStore::empty(self.root_path.clone())
+            Arc::new(FileStore::empty(self.root_path.clone()))
         }
     }
 }
