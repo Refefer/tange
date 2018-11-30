@@ -6,7 +6,7 @@ extern crate snap;
 
 use std::any::Any;
 use std::fs::{File,remove_file,create_dir_all};
-use std::io::{BufReader,BufWriter,Write};
+use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
