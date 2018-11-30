@@ -156,13 +156,13 @@ pub fn batch_apply<
 /// tree which attempts to maximize parallelism.
 /// ```
 /// use tange::deferred::{Deferred, tree_reduce};
-/// use tange::scheduler::GreedyScheduler;
+/// use tange::scheduler::LeveledScheduler;
 ///
 /// let vec: Vec<_> = (0usize..10)
 ///     .map(|v| Deferred::lift(v, None)).collect();
 /// let out = tree_reduce(&vec, |left, right| left + right).unwrap();
 /// let expected = (0usize..10).fold(0, |acc, x| acc + x);
-/// assert_eq!(out.run(&GreedyScheduler::new()), Some(expected));
+/// assert_eq!(out.run(&LeveledScheduler), Some(expected));
 /// ```
 pub fn tree_reduce<A: Any + Send + Sync + Clone, 
                    F: 'static + Sync + Send + Clone + Fn(&A, &A) -> A
@@ -221,9 +221,10 @@ mod def_test {
     fn test_tree_reduce() {
         let v: Vec<_> = (0..999usize).into_iter()
             .map(|x| Deferred::lift(x, None))
+            .map(|d| d.apply(|x| x + 1))
             .collect();
 
-        let res = (0..999usize).sum();
+        let res = (1..1000usize).sum();
 
         let agg = tree_reduce(&v, |x, y| x + y).unwrap();
         let results = agg.run(&LeveledScheduler);

@@ -1,6 +1,5 @@
 //! Contains all the runtimes scheduling Graphs for execution.
 extern crate num_cpus;
-extern crate rayon;
 extern crate log;
 extern crate priority_queue;
 extern crate jobpool;
@@ -10,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use log::Level::{Trace,Debug as LDebug};
-use self::rayon::prelude::*;
 use self::priority_queue::PriorityQueue;
 use self::jobpool::JobPool;
 
@@ -362,7 +360,7 @@ impl Scheduler for LeveledScheduler{
     ) -> Option<Arc<BASS>> {
         
         let out_handle = graph.handle.clone();
-        let dag = DAG::new(graph);
+        let dag = Arc::new(DAG::new(graph));
         debug!("Number of Tasks Specified: {}", dag.tasks.len());
 
         let (inbound, _outbound) = build_dep_graph(&dag);
@@ -391,10 +389,17 @@ impl Scheduler for LeveledScheduler{
         let dsam = Arc::new(Mutex::new(raw_ds));
 
         for (i, level) in levels.into_iter().enumerate() {
+            let mut pool = JobPool::new(num_cpus::get());
             debug!("Running level: {}", i);
-            // Run graph
-            level.par_iter().for_each(|chain| { run_task(&dag, chain, dsam.clone()) })
-                
+            for chain in level {
+                let g = dag.clone();
+                let c = chain.clone();
+                let d = dsam.clone();
+                pool.queue(move || { run_task(&g, &c, d); });
+            }
+
+            // block until all are done
+            pool.shutdown();
         }
 
         debug!("Finished");

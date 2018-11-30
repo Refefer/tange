@@ -10,7 +10,6 @@ keywords = ["parallel", "thread", "concurrency", "dataflow", "performance"]
 categories = ["concurrency"]
 
 [dependencies]
-rayon = "1.0"
 log = "0.4"
 priority-queue = "0.5.1"
 jobpool = "0.3.8"
