@@ -1,6 +1,6 @@
 [package]
 name = "tange"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Andrew Stanton <refefer@gmail.com>"]
 description = "Scalable Task-based Parallelism Framework"
 license = "Apache-2.0/MIT"
