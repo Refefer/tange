@@ -2,6 +2,7 @@
 extern crate serde;
 extern crate bincode;
 extern crate uuid;
+extern crate libflate;
 
 use std::any::Any;
 use std::fs::{File,remove_file,create_dir_all};
@@ -9,6 +10,7 @@ use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use self::libflate::gzip::{Encoder,Decoder};
 use self::serde::{Serialize,Deserialize};
 use self::bincode::{serialize_into, deserialize_from,ErrorKind};
 use self::uuid::Uuid;
@@ -126,7 +128,7 @@ pub struct DiskBuffer<A> {
     root_path: Arc<String>, 
     name: String,
     pd: PhantomData<A>,
-    out: BufWriter<File>
+    out: Encoder<BufWriter<File>>
 }
 
 impl <A> DiskBuffer<A> {
@@ -138,11 +140,12 @@ impl <A> DiskBuffer<A> {
         }
         let fd = File::create(&name).expect("Can't create file!");
         let bw = BufWriter::new(fd);
+        let encoder = Encoder::new(bw).expect("Unable to create gzip writer");
         DiskBuffer { 
             root_path: path, 
             name: name, 
             pd: PhantomData,
-            out: bw
+            out: encoder 
         }
     }
 }
@@ -202,6 +205,8 @@ impl <A: Serialize + Clone + Send + Sync> ValueWriter<A> for DiskBuffer<A> {
     }
 
     fn finish(self) -> Self::Out {
+        // Flush the rest of data to disk
+        self.out.finish();
         Arc::new(FileStore { 
             root_path: self.root_path.clone(), 
             name: Some(self.name), 
@@ -232,7 +237,9 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> IntoIterator for Recor
         if let Some(ref n) = self.0 {
             let fd = File::open(n).expect("File didn't exist on open!");
             let br = BufReader::new(fd);
-            RecordStreamer(Some(br), PhantomData)
+            let decoder = Decoder::new(br)
+                .expect("Unable to open decoder for decompression");
+            RecordStreamer(Some(decoder), PhantomData)
         } else {
             RecordStreamer(None, PhantomData)
         }
@@ -240,7 +247,7 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> IntoIterator for Recor
 }
 
 /// Stream Records from an open file
-pub struct RecordStreamer<A>(Option<BufReader<File>>, PhantomData<A>);
+pub struct RecordStreamer<A>(Option<Decoder<BufReader<File>>>, PhantomData<A>);
 
 impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Iterator for RecordStreamer<A> {
     type Item = A;
