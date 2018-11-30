@@ -15,7 +15,7 @@ bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
 uuid = { version = "0.6", features = ["v4"] }
-libflate = "0.1.18"
+snap = "0.2.5"
 
 [lib]
 name = "tange_collection"
