@@ -4,7 +4,7 @@ extern crate bincode;
 extern crate uuid;
 
 use std::any::Any;
-use std::fs::{File,remove_file,copy,create_dir_all};
+use std::fs::{File,remove_file,create_dir_all};
 use std::io::{BufReader,BufWriter};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -218,22 +218,7 @@ impl <A: Clone + Send + Sync + for<'de> Deserialize<'de>> Stream<A> for Arc<File
         RecordFile(self.name.clone(), PhantomData)
     }
 
-    fn copy(&self) -> Self {
-        if let Some(ref name) = self.name {
-            self.clone()
-            /*
-            let new_name = format!("{}/tange-{}", &self.root_path, Uuid::new_v4());
-            copy(name, &new_name).expect("Failed to copy file!");
-            FileStore {
-                root_path: self.root_path.clone(),
-                name: Some(new_name),
-                pd: PhantomData
-            }
-            */
-        } else {
-            Arc::new(FileStore::empty(self.root_path.clone()))
-        }
-    }
+    fn copy(&self) -> Self { self.clone() }
 }
 
 /// Streams records from an optional File.  If the file is none, returns the Empty iterator

@@ -170,6 +170,8 @@ impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskC
     ///   assert_eq!(col.n_partitions(), 1);
     ///   let two = col.split(2);
     ///   assert_eq!(two.n_partitions(), 2);
+    ///   let two = col.split(3);
+    ///   assert_eq!(two.n_partitions(), 3);
     /// ```
 
     pub fn split(&self, n_chunks: usize) -> DiskCollection<A> {
