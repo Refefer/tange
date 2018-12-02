@@ -11,6 +11,7 @@ use std::any::Any;
 use std::io::prelude::*;
 use std::io::BufWriter;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use self::serde::{Deserialize,Serialize};
 
@@ -451,12 +452,15 @@ impl MemoryCollection<String> {
 
     /// Writes each record in a collection to disk, newline delimited.
     /// MemoryCollection will create a new file within the path for each partition.
-    pub fn sink(&self, path: &'static str) -> MemoryCollection<usize> {
+    pub fn sink(&self, path: &str) -> MemoryCollection<usize> {
+        let p: Arc<String> = Arc::new(path.to_owned());
         let pats = batch_apply(&self.partitions, move |idx, vs| {
-            fs::create_dir_all(path)
+            let p2: Arc<String> = p.clone();
+            let local: &str = &p2;
+            fs::create_dir_all(local)
                 .expect("Welp, something went terribly wrong when creating directory");
 
-            let file = fs::File::create(&format!("{}/{}", path, idx))
+            let file = fs::File::create(&format!("{}/{}", local, idx))
                 .expect("Issues opening file!");
             let mut bw = BufWriter::new(file);
 
