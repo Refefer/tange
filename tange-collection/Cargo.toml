@@ -1,6 +1,6 @@
 [package]
 name = "tange-collection"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Andrew Stanton <refefer@gmail.com>"]
 description = "Dataflow computation"
 license = "Apache-2.0/MIT"
@@ -10,7 +10,7 @@ keywords = ["parallel", "thread", "concurrency", "dataflow", "performance"]
 categories = ["concurrency", "algorithms"]
 
 [dependencies]
-tange = "0.1.0"
+tange = "0.1"
 bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
