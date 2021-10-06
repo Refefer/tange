@@ -10,7 +10,7 @@ keywords = ["parallel", "thread", "concurrency", "dataflow", "performance"]
 categories = ["concurrency", "algorithms"]
 
 [dependencies]
-tange = "0.1"
+tange = {git = "https://github.com/Refefer/tange", "branch" = "master"}
 bincode = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
