@@ -17,7 +17,7 @@ use self::serde::{Deserialize,Serialize};
 
 use collection::disk::DiskCollection;
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
-use tange::scheduler::Scheduler;
+use tange::scheduler::{Scheduler,GreedyScheduler};
 use partitioned::{join_on_key as jok, partition, partition_by_key, fold_by, concat};
 use interfaces::{Memory,Disk};
 use super::emit;
@@ -377,6 +377,12 @@ impl <A: Any + Send + Sync + Clone> MemoryCollection<A> {
         });
         cat.and_then(|x| x.run(s))
     }
+    
+    /// Executes the Collection, returning the result of the computation
+    pub fn eval(&self) -> Option<Vec<A>> {
+        self.run(&GreedyScheduler::new())
+    }
+
 }
 
 impl <A: Any + Send + Sync + Clone> MemoryCollection<Vec<A>> {

@@ -22,7 +22,7 @@ use self::serde::Deserialize;
 use self::serde::Serialize;
 
 use tange::deferred::{Deferred, batch_apply, tree_reduce};
-use tange::scheduler::Scheduler;
+use tange::scheduler::{Scheduler,GreedyScheduler};
 
 use collection::memory::MemoryCollection;
 use partitioned::{join_on_key as jok, partition, partition_by_key, fold_by, concat};
@@ -390,6 +390,12 @@ pub fn sort_by<
         });
         cat.and_then(|x| x.run(s))
     }
+    
+    /// Executes the Collection, returning the result of the computation
+    pub fn eval(&self) -> Option<Vec<A>> {
+        self.run(&GreedyScheduler::new())
+    }
+
 }
 
 impl <A: Any + Send + Sync + Clone + Serialize + for<'de>Deserialize<'de>> DiskCollection<Vec<A>> {
