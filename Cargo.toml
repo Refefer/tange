@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "tange-core",
+    "tange-collection",
+]
